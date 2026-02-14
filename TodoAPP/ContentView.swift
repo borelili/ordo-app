@@ -45,8 +45,11 @@ struct ContentView: View {
     enum TaskFilter: String, CaseIterable {
         case all = "全部"
         case today = "今天"
+        case upcoming = "即将到来"
+        case overdue = "已逾期"
         case scheduled = "已计划"
         case flagged = "重要"
+        case noDate = "无日期"
         case completed = "已完成"
     }
     
@@ -73,13 +76,30 @@ struct ContentView: View {
         case .today:
             filtered = filtered.filter { task in
                 if task.isCompleted { return false }
-                // 今天创建的任务
-                if Calendar.current.isDateInToday(task.createdAt) {
-                    return true
-                }
-                // 截止日期是今天或之前的任务（包括过期）
+                // 截止日期是今天的任务
                 if let dueDate = task.dueDate {
-                    return dueDate <= Calendar.current.startOfDay(for: Date().addingTimeInterval(24*60*60))
+                    return Calendar.current.isDateInToday(dueDate)
+                }
+                // 今天创建且无截止日期的任务
+                return Calendar.current.isDateInToday(task.createdAt) && task.dueDate == nil
+            }
+        case .upcoming:
+            // 未来7天内到期的任务
+            filtered = filtered.filter { task in
+                if task.isCompleted { return false }
+                if let dueDate = task.dueDate {
+                    let now = Date()
+                    let sevenDaysLater = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
+                    return dueDate > now && dueDate <= sevenDaysLater
+                }
+                return false
+            }
+        case .overdue:
+            // 已逾期的任务
+            filtered = filtered.filter { task in
+                if task.isCompleted { return false }
+                if let dueDate = task.dueDate {
+                    return dueDate < Date()
                 }
                 return false
             }
@@ -89,6 +109,9 @@ struct ContentView: View {
             filtered = filtered.filter { 
                 ($0.priority == .high || $0.priority == .urgent) && !$0.isCompleted 
             }
+        case .noDate:
+            // 没有截止日期的未完成任务
+            filtered = filtered.filter { $0.dueDate == nil && !$0.isCompleted }
         case .completed:
             filtered = filtered.filter { $0.isCompleted }
         }
@@ -524,8 +547,11 @@ struct ContentView: View {
         switch filter {
         case .all: return "tray"
         case .today: return "calendar"
-        case .scheduled: return "calendar.badge.clock"
+        case .upcoming: return "calendar.badge.clock"
+        case .overdue: return "exclamationmark.triangle"
+        case .scheduled: return "calendar.circle"
         case .flagged: return "flag.fill"
+        case .noDate: return "calendar.badge.minus"
         case .completed: return "checkmark.circle"
         }
     }
@@ -534,9 +560,12 @@ struct ContentView: View {
         switch filter {
         case .all: return .blue
         case .today: return .green
-        case .scheduled: return .orange
-        case .flagged: return .red
-        case .completed: return .gray
+        case .upcoming: return .orange
+        case .overdue: return .red
+        case .scheduled: return .purple
+        case .flagged: return .pink
+        case .noDate: return .gray
+        case .completed: return .secondary
         }
     }
     
@@ -547,13 +576,26 @@ struct ContentView: View {
         case .today:
             return tasks.filter { task in
                 if task.isCompleted { return false }
-                // 今天创建的任务
-                if Calendar.current.isDateInToday(task.createdAt) {
-                    return true
-                }
-                // 截止日期是今天或之前的任务
                 if let dueDate = task.dueDate {
-                    return dueDate <= Calendar.current.startOfDay(for: Date().addingTimeInterval(24*60*60))
+                    return Calendar.current.isDateInToday(dueDate)
+                }
+                return Calendar.current.isDateInToday(task.createdAt) && task.dueDate == nil
+            }.count
+        case .upcoming:
+            return tasks.filter { task in
+                if task.isCompleted { return false }
+                if let dueDate = task.dueDate {
+                    let now = Date()
+                    let sevenDaysLater = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
+                    return dueDate > now && dueDate <= sevenDaysLater
+                }
+                return false
+            }.count
+        case .overdue:
+            return tasks.filter { task in
+                if task.isCompleted { return false }
+                if let dueDate = task.dueDate {
+                    return dueDate < Date()
                 }
                 return false
             }.count
@@ -563,6 +605,8 @@ struct ContentView: View {
             return tasks.filter { 
                 ($0.priority == .high || $0.priority == .urgent) && !$0.isCompleted 
             }.count
+        case .noDate:
+            return tasks.filter { $0.dueDate == nil && !$0.isCompleted }.count
         case .completed:
             return tasks.filter { $0.isCompleted }.count
         }
