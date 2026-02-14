@@ -26,6 +26,7 @@ struct TaskDetailView: View {
     @State private var showingAddSubtask = false
     @State private var editingSubtask: Subtask?
     @State private var editSubtaskTitle = ""
+    @State private var showNotificationPermissionAlert = false
     
     var body: some View {
         ScrollView {
@@ -167,12 +168,27 @@ struct TaskDetailView: View {
                         Toggle("设置提醒", isOn: $hasReminder)
                             .onChange(of: hasReminder) { oldValue, newValue in
                                 if !newValue {
+                                    // 关闭提醒
                                     if task.reminderDate != nil {
                                         task.reminderDate = nil
                                         NotificationManager.shared.cancelNotification(for: task)
+                                        try? modelContext.save()
                                     }
-                                } else if task.reminderDate == nil {
-                                    task.reminderDate = Date()
+                                } else {
+                                    // 打开提醒 - 需要检查权限
+                                    let tempDate = Date()
+                                    NotificationManager.shared.scheduleNotification(for: task, at: tempDate) { result in
+                                        switch result {
+                                        case .success:
+                                            // 权限已授予，设置 reminderDate
+                                            task.reminderDate = tempDate
+                                            try? modelContext.save()
+                                        case .failure:
+                                            // 权限被拒绝，显示提示并回滚开关
+                                            hasReminder = false
+                                            showNotificationPermissionAlert = true
+                                        }
+                                    }
                                 }
                             }
                         
@@ -181,12 +197,16 @@ struct TaskDetailView: View {
                                 get: { task.reminderDate ?? Date() },
                                 set: { newDate in
                                     let oldDate = task.reminderDate
-                                    task.reminderDate = newDate
-                                    // 更新通知
-                                    if oldDate != nil {
-                                        NotificationManager.shared.updateNotification(for: task, at: newDate)
-                                    } else {
-                                        NotificationManager.shared.scheduleNotification(for: task, at: newDate)
+                                    // 检查权限并更新通知
+                                    NotificationManager.shared.scheduleNotification(for: task, at: newDate) { result in
+                                        switch result {
+                                        case .success:
+                                            task.reminderDate = newDate
+                                            try? modelContext.save()
+                                        case .failure:
+                                            // 权限被拒绝，显示提示并恢复原日期
+                                            showNotificationPermissionAlert = true
+                                        }
                                     }
                                 }
                             ), displayedComponents: [.date, .hourAndMinute])
@@ -341,6 +361,21 @@ struct TaskDetailView: View {
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
+        .handleNotificationPermission(
+            showAlert: $showNotificationPermissionAlert,
+            onSettingsOpened: {
+                // 用户去设置页后，关闭提醒开关
+                hasReminder = false
+                task.reminderDate = nil
+                try? modelContext.save()
+            },
+            onDismissed: {
+                // 用户取消后，也关闭提醒开关
+                hasReminder = false
+                task.reminderDate = nil
+                try? modelContext.save()
+            }
+        )
         .onAppear {
             hasDueDate = task.dueDate != nil
             hasReminder = task.reminderDate != nil
@@ -477,10 +512,17 @@ struct TaskDetailView: View {
                     NotificationManager.shared.cancelNotification(for: task)
                 }
             }
-            // 如果任务被取消完成，且有未来的提醒，重新调度通知
+            // 如果任务被取消完成，且有未来的提醒，重新调度通知（带权限检查）
             else if wasCompleted && !task.isCompleted {
                 if let reminderDate = task.reminderDate, reminderDate > Date() {
-                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate)
+                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate) { result in
+                        if case .failure = result {
+                            // 权限被拒绝，清除 reminderDate
+                            task.reminderDate = nil
+                            try? modelContext.save()
+                            showNotificationPermissionAlert = true
+                        }
+                    }
                 }
             }
             

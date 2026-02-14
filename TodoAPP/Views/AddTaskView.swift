@@ -24,6 +24,8 @@ struct AddTaskView: View {
     @State private var selectedTags: Set<Tag> = []
     @State private var showingTagPicker = false
     @State private var isSaving = false
+    @State private var showNotificationPermissionAlert = false
+    @State private var pendingTaskToSave: Task?
     
     var selectedList: TaskList?
     
@@ -140,6 +142,17 @@ struct AddTaskView: View {
                     .environmentObject(errorHandler)
             }
         }
+        .handleNotificationPermission(
+            showAlert: $showNotificationPermissionAlert,
+            onSettingsOpened: {
+                // 用户去设置页后，取消提醒开关
+                hasReminder = false
+            },
+            onDismissed: {
+                // 用户取消后，也取消提醒开关
+                hasReminder = false
+            }
+        )
     }
     
     private func saveTask() {
@@ -174,9 +187,23 @@ struct AddTaskView: View {
         do {
             try modelContext.save()
             
-            // 如果有提醒，调度通知
+            // 如果有提醒，调度通知（带权限检查）
             if hasReminder {
-                NotificationManager.shared.scheduleNotification(for: newTask, at: reminderDate)
+                NotificationManager.shared.scheduleNotification(for: newTask, at: reminderDate) { result in
+                    switch result {
+                    case .success:
+                        print("✅ 任务已保存且通知已设置: \(title)")
+                    case .failure(let error):
+                        // 权限被拒绝，显示提示
+                        if error is NotificationAuthorizationError {
+                            showNotificationPermissionAlert = true
+                            // 清除 reminderDate，因为通知无法调度
+                            newTask.reminderDate = nil
+                            try? modelContext.save()
+                        }
+                        print("⚠️ 通知调度失败: \(error.localizedDescription)")
+                    }
+                }
             }
             
             print("✅ 任务已保存: \(title)")

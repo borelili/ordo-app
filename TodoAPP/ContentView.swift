@@ -881,9 +881,15 @@ struct ContentView: View {
                     NotificationManager.shared.cancelNotification(for: task)
                 }
             } else if wasCompleted && !task.isCompleted {
-                // 任务取消完成，恢复未来的通知
+                // 任务取消完成，恢复未来的通知（静默处理权限）
                 if let reminderDate = task.reminderDate, reminderDate > Date() {
-                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate)
+                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate) { result in
+                        if case .failure = result {
+                            // 权限被拒绝，静默清除 reminderDate
+                            task.reminderDate = nil
+                            print("⚠️ 通知权限不足，已清除任务 \(task.title) 的提醒时间")
+                        }
+                    }
                 }
             }
         }
@@ -1230,10 +1236,17 @@ struct TaskRowView: View {
                     NotificationManager.shared.cancelNotification(for: task)
                 }
             }
-            // 如果任务被取消完成，且有未来的提醒，重新调度通知
+            // 如果任务被取消完成，且有未来的提醒，重新调度通知（静默处理权限）
             else if wasCompleted && !task.isCompleted {
                 if let reminderDate = task.reminderDate, reminderDate > Date() {
-                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate)
+                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate) { result in
+                        if case .failure = result {
+                            // 权限被拒绝，静默清除 reminderDate（列表视图不显示弹窗）
+                            task.reminderDate = nil
+                            try? modelContext.save()
+                            print("⚠️ 通知权限不足，已清除提醒时间")
+                        }
+                    }
                 }
             }
             

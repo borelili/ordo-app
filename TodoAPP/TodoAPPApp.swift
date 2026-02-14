@@ -108,8 +108,14 @@ struct TodoAPPApp: App {
     }()
     
     init() {
-        // 请求通知权限
-        NotificationManager.shared.requestAuthorization()
+        // 请求通知权限（首次启动）
+        NotificationManager.shared.requestAuthorization { granted, error in
+            if granted {
+                print("✅ 应用启动：通知权限已授予")
+            } else {
+                print("⚠️ 应用启动：通知权限未授予")
+            }
+        }
     }
 
     var body: some Scene {
