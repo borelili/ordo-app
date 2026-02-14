@@ -37,6 +37,7 @@ struct ContentView: View {
     @State private var selectedTasks: Set<Task> = []
     @State private var showingBatchMoveSheet = false
     @State private var showingBatchDeleteConfirm = false
+    @State private var showingKeyboardShortcuts = false  // 快捷键帮助
     
     private let availableIcons = ["list.bullet","tray","bookmark","star","flag"]
     private let availableColors = ["blue","green","orange","red","purple","pink","gray"]
@@ -405,6 +406,14 @@ struct ContentView: View {
                 }
             )
         }
+        #if os(macOS)
+        .sheet(isPresented: $showingKeyboardShortcuts) {
+            KeyboardShortcutsView()
+        }
+        .onAppear {
+            setupKeyboardShortcutListeners()
+        }
+        #endif
     }
     
     // 批量操作工具栏
@@ -806,6 +815,52 @@ struct ContentView: View {
             errorHandler.handle(error, context: "移动任务")
         }
     }
+    
+    // MARK: - 键盘快捷键处理
+    
+    #if os(macOS)
+    private func setupKeyboardShortcutListeners() {
+        // 新建任务
+        NotificationCenter.default.addObserver(
+            forName: .newTask,
+            object: nil,
+            queue: .main
+        ) { [self] _ in
+            showingAddTask = true
+        }
+        
+        // 新建列表
+        NotificationCenter.default.addObserver(
+            forName: .newList,
+            object: nil,
+            queue: .main
+        ) { [self] _ in
+            showingAddList = true
+        }
+        
+        // 批量操作
+        NotificationCenter.default.addObserver(
+            forName: .batchOperations,
+            object: nil,
+            queue: .main
+        ) { [self] _ in
+            if selectionMode {
+                exitSelectionMode()
+            } else {
+                enterSelectionMode()
+            }
+        }
+        
+        // 显示快捷键帮助
+        NotificationCenter.default.addObserver(
+            forName: .showKeyboardShortcuts,
+            object: nil,
+            queue: .main
+        ) { [self] _ in
+            showingKeyboardShortcuts = true
+        }
+    }
+    #endif
 }
 
 // SearchBar 组件
@@ -975,6 +1030,95 @@ struct TaskRowView: View {
         }
     }
 }
+
+// 键盘快捷键帮助面板
+#if os(macOS)
+struct KeyboardShortcutsView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    struct ShortcutItem {
+        let key: String
+        let description: String
+    }
+    
+    let shortcuts: [ShortcutItem] = [
+        ShortcutItem(key: "⌘N", description: "新建任务"),
+        ShortcutItem(key: "⌘⇧N", description: "新建列表"),
+        ShortcutItem(key: "⌘B", description: "批量操作模式"),
+        ShortcutItem(key: "⌘/", description: "显示快捷键帮助"),
+    ]
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Text("键盘快捷键")
+                    .font(.headline)
+                    .padding()
+                Spacer()
+                Button("关闭") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+                .padding()
+            }
+            .background(Color(NSColor.controlBackgroundColor))
+            
+            Divider()
+            
+            // 快捷键列表
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(shortcuts, id: \.key) { shortcut in
+                        HStack {
+                            Text(shortcut.key)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(width: 80, alignment: .leading)
+                            
+                            Text(shortcut.description)
+                                .font(.body)
+                            
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    Divider()
+                        .padding(.vertical, 8)
+                    
+                    // 系统快捷键
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("系统快捷键")
+                            .font(.headline)
+                            .padding(.horizontal)
+                        
+                        HStack {
+                            Text("⌘W")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(width: 80, alignment: .leading)
+                            Text("关闭窗口")
+                        }
+                        .padding(.horizontal)
+                        
+                        HStack {
+                            Text("⌘Q")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(width: 80, alignment: .leading)
+                            Text("退出应用")
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                .padding(.vertical)
+            }
+        }
+        .frame(width: 400, height: 500)
+    }
+}
+#endif
 
 #Preview {
     ContentView()

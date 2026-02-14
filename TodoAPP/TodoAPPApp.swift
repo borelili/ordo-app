@@ -117,5 +117,44 @@ struct TodoAPPApp: App {
             ContentView()
         }
         .modelContainer(sharedModelContainer)
+        #if os(macOS)
+        .commands {
+            // 文件菜单命令
+            CommandGroup(after: .newItem) {
+                Button("新建任务") {
+                    NotificationCenter.default.post(name: .newTask, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+                
+                Button("新建列表") {
+                    NotificationCenter.default.post(name: .newList, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                
+                Divider()
+                
+                Button("批量操作") {
+                    NotificationCenter.default.post(name: .batchOperations, object: nil)
+                }
+                .keyboardShortcut("b", modifiers: .command)
+            }
+            
+            // 帮助菜单命令
+            CommandGroup(after: .help) {
+                Button("键盘快捷键") {
+                    NotificationCenter.default.post(name: .showKeyboardShortcuts, object: nil)
+                }
+                .keyboardShortcut("/", modifiers: .command)
+            }
+        }
+        #endif
     }
+}
+
+// NotificationCenter 扩展 - 定义通知名称
+extension Notification.Name {
+    static let newTask = Notification.Name("newTask")
+    static let newList = Notification.Name("newList")
+    static let batchOperations = Notification.Name("batchOperations")
+    static let showKeyboardShortcuts = Notification.Name("showKeyboardShortcuts")
 }
