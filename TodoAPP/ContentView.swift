@@ -555,16 +555,14 @@ struct SearchBar: View {
 
 // TaskRowView 组件
 struct TaskRowView: View {
+    @Environment(\.modelContext) private var modelContext
     @Bindable var task: Task
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // 完成按钮
             Button(action: {
-                withAnimation {
-                    task.isCompleted.toggle()
-                    task.updatedAt = Date()
-                }
+                toggleTaskCompletion()
             }) {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
@@ -642,6 +640,36 @@ struct TaskRowView: View {
     
     private func isOverdue(_ date: Date) -> Bool {
         return date < Date() && !task.isCompleted
+    }
+    
+    private func toggleTaskCompletion() {
+        withAnimation {
+            let wasCompleted = task.isCompleted
+            task.isCompleted.toggle()
+            task.updatedAt = Date()
+            
+            // 如果任务标记为完成，取消关联的提醒通知
+            if !wasCompleted && task.isCompleted {
+                if task.reminderDate != nil {
+                    NotificationManager.shared.cancelNotification(for: task)
+                }
+            }
+            // 如果任务被取消完成，且有未来的提醒，重新调度通知
+            else if wasCompleted && !task.isCompleted {
+                if let reminderDate = task.reminderDate, reminderDate > Date() {
+                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate)
+                }
+            }
+            
+            // 保存更改
+            do {
+                try modelContext.save()
+            } catch {
+                // 如果保存失败，回滚状态
+                task.isCompleted = wasCompleted
+                print("❌ 保存任务状态失败: \(error)")
+            }
+        }
     }
 }
 

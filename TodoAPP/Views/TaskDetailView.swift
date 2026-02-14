@@ -29,15 +29,7 @@ struct TaskDetailView: View {
                 // 完成状态
                 HStack {
                     Button(action: {
-                        withAnimation {
-                            task.isCompleted.toggle()
-                            task.updatedAt = Date()
-                            do {
-                                try modelContext.save()
-                            } catch {
-                                errorHandler.handle(error, context: "更新任务状态")
-                            }
-                        }
+                        toggleTaskCompletion()
                     }) {
                         HStack {
                             Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -393,6 +385,35 @@ struct TaskDetailView: View {
                 try modelContext.save()
             } catch {
                 errorHandler.handle(error, context: "移除标签")
+            }
+        }
+    }
+    
+    private func toggleTaskCompletion() {
+        withAnimation {
+            let wasCompleted = task.isCompleted
+            task.isCompleted.toggle()
+            task.updatedAt = Date()
+            
+            // 如果任务标记为完成，取消关联的提醒通知
+            if !wasCompleted && task.isCompleted {
+                if task.reminderDate != nil {
+                    NotificationManager.shared.cancelNotification(for: task)
+                }
+            }
+            // 如果任务被取消完成，且有未来的提醒，重新调度通知
+            else if wasCompleted && !task.isCompleted {
+                if let reminderDate = task.reminderDate, reminderDate > Date() {
+                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate)
+                }
+            }
+            
+            do {
+                try modelContext.save()
+            } catch {
+                // 如果保存失败，回滚状态
+                task.isCompleted = wasCompleted
+                errorHandler.handle(error, context: "更新任务状态")
             }
         }
     }
