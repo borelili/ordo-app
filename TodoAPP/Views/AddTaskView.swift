@@ -221,6 +221,10 @@ struct TagPickerView: View {
     @State private var showingAddTag = false
     @State private var showingDeleteConfirm = false
     @State private var tagToDelete: Tag?
+    @State private var showingEditTag = false
+    @State private var editingTag: Tag?
+    @State private var editTagName = ""
+    @State private var editTagColor = "gray"
     
     let availableColors = ["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"]
     
@@ -264,7 +268,17 @@ struct TagPickerView: View {
                                         }
                                     }
                                 }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button {
+                                        editingTag = tag
+                                        editTagName = tag.name
+                                        editTagColor = tag.color
+                                        showingEditTag = true
+                                    } label: {
+                                        Label("编辑", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                    
                                     Button(role: .destructive) {
                                         requestDeleteTag(tag)
                                     } label: {
@@ -272,6 +286,15 @@ struct TagPickerView: View {
                                     }
                                 }
                                 .contextMenu {
+                                    Button {
+                                        editingTag = tag
+                                        editTagName = tag.name
+                                        editTagColor = tag.color
+                                        showingEditTag = true
+                                    } label: {
+                                        Label("编辑标签", systemImage: "pencil")
+                                    }
+                                    
                                     Button(role: .destructive) {
                                         requestDeleteTag(tag)
                                     } label: {
@@ -328,6 +351,65 @@ struct TagPickerView: View {
                     Text("确定要删除标签「\(tag.name)」吗？")
                 }
             }
+            .sheet(isPresented: $showingEditTag) {
+                NavigationStack {
+                    Form {
+                        Section("标签信息") {
+                            TextField("标签名称", text: $editTagName)
+                            
+                            Picker("颜色", selection: $editTagColor) {
+                                ForEach(availableColors, id: \.self) { color in
+                                    HStack {
+                                        Circle()
+                                            .fill(Tag(name: "", color: color).colorValue)
+                                            .frame(width: 20, height: 20)
+                                        Text(color)
+                                    }
+                                    .tag(color)
+                                }
+                            }
+                            #if os(iOS)
+                            .pickerStyle(.menu)
+                            #endif
+                            
+                            // 当前颜色预览
+                            HStack {
+                                Text("预览")
+                                Spacer()
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(Tag(name: "", color: editTagColor).colorValue)
+                                        .frame(width: 16, height: 16)
+                                    Text(editTagName.isEmpty ? "标签名称" : editTagName)
+                                        .font(.callout)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Tag(name: "", color: editTagColor).colorValue.opacity(0.2))
+                                .cornerRadius(12)
+                            }
+                        }
+                    }
+                    .navigationTitle("编辑标签")
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") {
+                                showingEditTag = false
+                                editingTag = nil
+                            }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("保存") {
+                                saveEditedTag()
+                            }
+                            .disabled(editTagName.isEmpty)
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -368,6 +450,28 @@ struct TagPickerView: View {
             errorHandler.handle(error, context: "删除标签")
         }
         tagToDelete = nil
+    }
+    
+    private func saveEditedTag() {
+        guard let tag = editingTag, !editTagName.isEmpty else {
+            showingEditTag = false
+            return
+        }
+        
+        print("✏️ 编辑标签: \(tag.name) -> \(editTagName), 颜色: \(editTagColor)")
+        
+        tag.name = editTagName
+        tag.color = editTagColor
+        
+        do {
+            try modelContext.save()
+            print("✅ 编辑标签成功")
+        } catch {
+            errorHandler.handle(error, context: "编辑标签")
+        }
+        
+        showingEditTag = false
+        editingTag = nil
     }
 }
 

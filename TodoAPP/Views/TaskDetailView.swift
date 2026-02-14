@@ -171,7 +171,7 @@ struct TaskDetailView: View {
                         Toggle("设置提醒", isOn: $hasReminder)
                             .onChange(of: hasReminder) { oldValue, newValue in
                                 if !newValue {
-                                    if let oldReminder = task.reminderDate {
+                                    if task.reminderDate != nil {
                                         task.reminderDate = nil
                                         NotificationManager.shared.cancelNotification(for: task)
                                     }

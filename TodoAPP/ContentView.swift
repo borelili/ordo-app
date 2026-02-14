@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var editColor = "blue"
     @AppStorage("listDeleteBehavior") private var listDeleteBehavior: String = "unlink" // "unlink" or "cascade"
     @State private var showingSettings = false
+    @State private var showingTagManagement = false
     private let availableIcons = ["list.bullet","tray","bookmark","star","flag"]
     private let availableColors = ["blue","green","orange","red","purple","pink","gray"]
     
@@ -161,6 +162,9 @@ struct ContentView: View {
                     Button(action: addNewList) {
                         Label("新建列表", systemImage: "plus.circle")
                     }
+                    Button(action: { showingTagManagement = true }) {
+                        Label("标签管理", systemImage: "tag")
+                    }
                     Button(action: { showingSettings = true }) {
                         Label("列表设置", systemImage: "gearshape")
                     }
@@ -221,6 +225,11 @@ struct ContentView: View {
                     }
                 }
                 .environment(\.modelContext, modelContext)
+            }
+
+            .sheet(isPresented: $showingTagManagement) {
+                TagManagementView()
+                    .environment(\.modelContext, modelContext)
             }
 
             .sheet(isPresented: $showingEditList) {
