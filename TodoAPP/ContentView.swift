@@ -129,44 +129,88 @@ struct ContentView: View {
         NavigationSplitView {
             // 侧边栏
             List(selection: $selectedList) {
-                Section("智能列表") {
+                Section {
                     ForEach(TaskFilter.allCases, id: \.self) { filter in
                         Button(action: {
                             selectedFilter = filter
                             selectedList = nil
                         }) {
-                            HStack {
+                            HStack(spacing: 12) {
                                 Image(systemName: iconForFilter(filter))
+                                    .font(.body.weight(.medium))
                                     .foregroundColor(colorForFilter(filter))
+                                    .frame(width: 24)
+                                
                                 Text(filter.rawValue)
+                                    .font(.body)
+                                
                                 Spacer()
-                                Text("\(countForFilter(filter))")
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
+                                
+                                // 任务数量徽章
+                                let count = countForFilter(filter)
+                                if count > 0 {
+                                    Text("\(count)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(colorForFilter(filter).opacity(0.8))
+                                        )
+                                }
                             }
                         }
-                        .listRowBackground(selectedFilter == filter && selectedList == nil ? Color.blue.opacity(0.1) : Color.clear)
+                        .listRowBackground(
+                            selectedFilter == filter && selectedList == nil 
+                                ? colorForFilter(filter).opacity(0.15)
+                                : Color.clear
+                        )
                     }
+                } header: {
+                    Text("智能列表")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
                 }
                 
-                Section("我的列表") {
+                Section {
                     ForEach(taskLists.sorted { $0.sortOrder < $1.sortOrder }, id: \.id) { list in
                         Button(action: {
                             selectedList = list
                             selectedFilter = .all
                         }) {
-                            HStack {
+                            HStack(spacing: 12) {
                                 Image(systemName: list.icon)
+                                    .font(.body.weight(.medium))
                                     .foregroundColor(list.colorValue)
+                                    .frame(width: 24)
+                                
                                 Text(list.name)
+                                    .font(.body)
+                                
                                 Spacer()
-                                Text("\(list.tasks?.filter { !$0.isCompleted }.count ?? 0)")
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
+                                
+                                // 未完成任务数量
+                                let count = list.tasks?.filter { !$0.isCompleted }.count ?? 0
+                                if count > 0 {
+                                    Text("\(count)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(list.colorValue.opacity(0.8))
+                                        )
+                                }
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .listRowBackground(selectedList?.id == list.id ? Color.blue.opacity(0.1) : Color.clear)
+                        .listRowBackground(
+                            selectedList?.id == list.id 
+                                ? list.colorValue.opacity(0.15)
+                                : Color.clear
+                        )
                         .contextMenu {
                             Button {
                                 editingList = list
@@ -199,15 +243,30 @@ struct ContentView: View {
                     // macOS 上通过 contextMenu 提供额外的操作选项
                     #endif
                     
+                    Divider()
+                        .padding(.vertical, 4)
+                    
                     Button(action: addNewList) {
-                        Label("新建列表", systemImage: "plus.circle")
+                        Label("新建列表", systemImage: "plus.circle.fill")
+                            .font(.body.weight(.medium))
                     }
+                    .foregroundColor(.blue)
+                    
                     Button(action: { showingTagManagement = true }) {
-                        Label("标签管理", systemImage: "tag")
+                        Label("标签管理", systemImage: "tag.fill")
+                            .font(.body.weight(.medium))
                     }
+                    .foregroundColor(.orange)
+                    
                     Button(action: { showingSettings = true }) {
-                        Label("列表设置", systemImage: "gearshape")
+                        Label("列表设置", systemImage: "gearshape.fill")
+                            .font(.body.weight(.medium))
                     }
+                    .foregroundColor(.gray)
+                } header: {
+                    Text("我的列表")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
                 }
             }
             .navigationTitle("待办事项")
@@ -339,16 +398,23 @@ struct ContentView: View {
                                     isSelected: selectedTasks.contains(task),
                                     onSelectionToggle: { toggleTaskSelection(task) }
                                 )
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowBackground(Color.clear)
                             } else {
                                 NavigationLink(destination: TaskDetailView(task: task)) {
                                     TaskRowView(task: task)
                                 }
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowBackground(Color.clear)
                             }
                         }
                         .onMove(perform: moveTasks)
                         .onDelete(perform: deleteTasks)
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
             .navigationTitle(selectedList?.name ?? selectedFilter.rawValue)
@@ -443,39 +509,50 @@ struct ContentView: View {
     private var batchOperationToolbar: some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 20) {
+            HStack(spacing: 16) {
                 // 已选择数量
-                Text("已选择 \(selectedTasks.count) 项")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                    Text("已选择 \(selectedTasks.count) 项")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.primary)
+                }
                 
                 Spacer()
                 
                 // 批量完成/未完成
                 Button(action: batchToggleCompletion) {
-                    Label(allSelectedCompleted ? "标记未完成" : "标记完成", systemImage: allSelectedCompleted ? "circle" : "checkmark.circle")
+                    Label(allSelectedCompleted ? "标记未完成" : "标记完成", 
+                          systemImage: allSelectedCompleted ? "circle" : "checkmark.circle.fill")
+                        .font(.subheadline.weight(.medium))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
                 
                 // 批量移动
                 Button(action: { showingBatchMoveSheet = true }) {
-                    Label("移动到", systemImage: "folder")
+                    Label("移动", systemImage: "folder.fill")
+                        .font(.subheadline.weight(.medium))
                 }
                 .buttonStyle(.bordered)
                 
                 // 批量删除
                 Button(role: .destructive, action: { showingBatchDeleteConfirm = true }) {
-                    Label("删除", systemImage: "trash")
+                    Label("删除", systemImage: "trash.fill")
+                        .font(.subheadline.weight(.medium))
                 }
                 .buttonStyle(.bordered)
             }
-            .padding()
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
             Divider()
         }
 #if os(macOS)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
 #else
-        .background(Color(.systemBackground))
+        .background(Color(.systemBackground).opacity(0.95))
 #endif
         .sheet(isPresented: $showingBatchMoveSheet) {
             batchMoveListPicker
@@ -529,18 +606,41 @@ struct ContentView: View {
     }
     
     private var emptyStateView: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 60))
-                .foregroundColor(.gray)
-            Text("暂无任务")
-                .font(.title2)
-                .foregroundColor(.secondary)
-            Text("点击 + 创建新任务")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+        VStack(spacing: 24) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 72))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [.blue, .cyan],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .symbolRenderingMode(.hierarchical)
+                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+            
+            VStack(spacing: 8) {
+                Text("暂无任务")
+                    .font(.title2.weight(.semibold))
+                    .foregroundColor(.primary)
+                
+                Text("点击右上角 ＋ 创建新任务")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color.blue.opacity(0.02),
+                    Color.cyan.opacity(0.02),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
     }
     
     private func iconForFilter(_ filter: TaskFilter) -> String {
@@ -910,31 +1010,54 @@ struct ContentView: View {
 // SearchBar 组件
 struct SearchBar: View {
     @Binding var text: String
+    @FocusState private var isFocused: Bool
     
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(.gray)
+                .foregroundColor(isFocused ? .blue : .gray)
+                .font(.body)
+                .animation(.easeInOut(duration: 0.2), value: isFocused)
             
             TextField("搜索任务", text: $text)
                 .textFieldStyle(PlainTextFieldStyle())
+                .focused($isFocused)
             
             if !text.isEmpty {
                 Button(action: {
-                    text = ""
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        text = ""
+                    }
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.gray)
+                        .font(.body)
                 }
+                .transition(.scale.combined(with: .opacity))
             }
         }
-        .padding(8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
 #if os(iOS)
-        .background(Color(.systemGray6))
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemGray6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isFocused ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 2)
+        )
 #else
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isFocused ? Color.blue.opacity(0.5) : Color.primary.opacity(0.1), lineWidth: 2)
+        )
 #endif
-        .cornerRadius(10)
+        .animation(.easeInOut(duration: 0.2), value: isFocused)
     }
 }
 
@@ -949,15 +1072,16 @@ struct TaskRowView: View {
     var onSelectionToggle: (() -> Void)? = nil
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 14) {
             // 选择模式下的选择框
             if selectionMode {
                 Button(action: {
                     onSelectionToggle?()
                 }) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .foregroundColor(isSelected ? .blue : .gray)
+                        .font(.title2)
+                        .foregroundColor(isSelected ? .blue : .gray.opacity(0.5))
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(PlainButtonStyle())
             } else {
@@ -966,18 +1090,21 @@ struct TaskRowView: View {
                     toggleTaskCompletion()
                 }) {
                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .foregroundColor(task.isCompleted ? .green : .gray)
+                        .font(.title2)
+                        .foregroundColor(task.isCompleted ? .green : .gray.opacity(0.5))
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: task.isCompleted)
             }
             
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 // 标题
                 Text(task.title)
-                    .font(.body)
-                    .strikethrough(task.isCompleted)
+                    .font(.body.weight(task.isCompleted ? .regular : .medium))
+                    .strikethrough(task.isCompleted, color: .secondary)
                     .foregroundColor(task.isCompleted ? .secondary : .primary)
+                    .lineLimit(2)
                 
                 // 描述
                 if !task.taskDescription.isEmpty {
@@ -991,32 +1118,66 @@ struct TaskRowView: View {
                 HStack(spacing: 8) {
                     // 优先级
                     if task.priority != .medium {
-                        Label(task.priority.rawValue, systemImage: "flag.fill")
-                            .font(.caption)
-                            .foregroundColor(task.priority.color)
+                        HStack(spacing: 4) {
+                            Image(systemName: "flag.fill")
+                                .font(.caption2)
+                            Text(task.priority.rawValue)
+                                .font(.caption2.weight(.medium))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            task.priority.color
+                                .opacity(task.isCompleted ? 0.5 : 1.0)
+                        )
+                        .clipShape(Capsule())
                     }
                     
                     // 截止日期
                     if let dueDate = task.dueDate {
-                        Label(formatDate(dueDate), systemImage: "calendar")
-                            .font(.caption)
-                            .foregroundColor(isOverdue(dueDate) ? .red : .secondary)
+                        HStack(spacing: 4) {
+                            Image(systemName: isOverdue(dueDate) ? "exclamationmark.triangle.fill" : "calendar")
+                                .font(.caption2)
+                            Text(formatDate(dueDate))
+                                .font(.caption2.weight(.medium))
+                        }
+                        .foregroundColor(isOverdue(dueDate) ? .white : .secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            isOverdue(dueDate) 
+                                ? Color.red.opacity(task.isCompleted ? 0.5 : 1.0)
+                                : Color.secondary.opacity(0.15)
+                        )
+                        .clipShape(Capsule())
                     }
                     
                     // 颜色标签
                     if let tags = task.tags, !tags.isEmpty {
-                        ForEach(tags.prefix(3), id: \.id) { tag in
-                            HStack(spacing: 3) {
+                        ForEach(tags.prefix(2), id: \.id) { tag in
+                            HStack(spacing: 4) {
                                 Circle()
                                     .fill(tag.colorValue)
-                                    .frame(width: 6, height: 6)
+                                    .frame(width: 8, height: 8)
                                 Text(tag.name)
-                                    .font(.caption2)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundColor(tag.colorValue)
                             }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(tag.colorValue.opacity(0.15))
-                            .cornerRadius(8)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(tag.colorValue.opacity(0.12))
+                            .clipShape(Capsule())
+                        }
+                        
+                        if tags.count > 2 {
+                            Text("+\(tags.count - 2)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Color.secondary.opacity(0.1))
+                                .clipShape(Capsule())
                         }
                     }
                 }
@@ -1024,7 +1185,20 @@ struct TaskRowView: View {
             
             Spacer()
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(task.isCompleted ? Color.secondary.opacity(0.05) : Color.primary.opacity(0.03))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(
+                    task.isCompleted ? Color.clear : Color.primary.opacity(0.06),
+                    lineWidth: 1
+                )
+        )
+        .contentShape(Rectangle())
     }
     
     private func formatDate(_ date: Date) -> String {
