@@ -1,0 +1,41 @@
+//
+//  Tag.swift
+//  TodoAPP
+//
+//  Created on 2025/12/06
+//
+
+import Foundation
+import SwiftData
+import SwiftUI
+
+@Model
+final class Tag {
+    var id: UUID
+    var name: String
+    var color: String
+    
+    @Relationship(deleteRule: .nullify, inverse: \Task.tags)
+    var tasks: [Task]?
+    
+    init(name: String, color: String = "gray") {
+        self.id = UUID()
+        self.name = name
+        self.color = color
+        self.tasks = []
+    }
+    
+    var colorValue: Color {
+        switch color {
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        case "green": return .green
+        case "blue": return .blue
+        case "purple": return .purple
+        case "pink": return .pink
+        case "gray": return .gray
+        default: return .gray
+        }
+    }
+}
