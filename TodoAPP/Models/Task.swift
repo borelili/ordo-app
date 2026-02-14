@@ -20,6 +20,7 @@ final class Task {
     var reminderDate: Date?
     var createdAt: Date
     var updatedAt: Date
+    var order: Int  // 任务排序顺序
     
     // 关系
     var taskList: TaskList?
@@ -46,6 +47,7 @@ final class Task {
         self.reminderDate = reminderDate
         self.createdAt = Date()
         self.updatedAt = Date()
+        self.order = 0  // 默认排序值，创建时会被设置为实际值
         self.taskList = taskList
         self.tags = []
         self.subtasks = []
