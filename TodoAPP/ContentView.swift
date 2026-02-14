@@ -158,6 +158,9 @@ struct ContentView: View {
                     }
                     .onMove(perform: moveList)
                     .onDelete(perform: deleteList)
+                    #if os(macOS)
+                    // macOS 上通过 contextMenu 提供额外的操作选项
+                    #endif
                     
                     Button(action: addNewList) {
                         Label("新建列表", systemImage: "plus.circle")
