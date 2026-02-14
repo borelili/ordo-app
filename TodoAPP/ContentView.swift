@@ -92,7 +92,13 @@ struct ContentView: View {
             filtered = filtered.filter { $0.isCompleted }
         }
         
-        return filtered.sorted { $0.createdAt > $1.createdAt }
+        // 按 order 排序，如果 order 相同则按创建时间降序
+        return filtered.sorted { 
+            if $0.order == $1.order {
+                return $0.createdAt > $1.createdAt
+            }
+            return $0.order < $1.order
+        }
     }
     
     var body: some View {
@@ -315,6 +321,7 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        .onMove(perform: moveTasks)
                         .onDelete(perform: deleteTasks)
                     }
                     .listStyle(.plain)
@@ -774,6 +781,29 @@ struct ContentView: View {
             exitSelectionMode()
         } catch {
             errorHandler.handle(error, context: "批量删除任务")
+        }
+    }
+    
+    // MARK: - 拖拽排序方法
+    
+    private func moveTasks(from source: IndexSet, to destination: Int) {
+        // 获取当前筛选后的任务列表的可变副本
+        var tasks = filteredTasks
+        
+        // 移动任务
+        tasks.move(fromOffsets: source, toOffset: destination)
+        
+        // 更新所有任务的 order 值
+        for (index, task) in tasks.enumerated() {
+            task.order = index
+            task.updatedAt = Date()
+        }
+        
+        // 保存
+        do {
+            try modelContext.save()
+        } catch {
+            errorHandler.handle(error, context: "移动任务")
         }
     }
 }

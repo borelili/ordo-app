@@ -163,6 +163,11 @@ struct AddTaskView: View {
         // 添加标签
         newTask.tags = Array(selectedTags)
         
+        // 设置任务排序值（最大值 + 1）
+        let existingTasks = (try? modelContext.fetch(FetchDescriptor<Task>())) ?? []
+        let maxOrder = existingTasks.map { $0.order }.max() ?? -1
+        newTask.order = maxOrder + 1
+        
         modelContext.insert(newTask)
         
         // 保存并处理错误
