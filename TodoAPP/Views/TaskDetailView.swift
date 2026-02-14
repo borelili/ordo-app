@@ -22,6 +22,10 @@ struct TaskDetailView: View {
     @State private var hasDueDate = false
     @State private var hasReminder = false
     @State private var tagPickerDismissAction: (() -> Void)?
+    @State private var newSubtaskTitle = ""
+    @State private var showingAddSubtask = false
+    @State private var editingSubtask: Subtask?
+    @State private var editSubtaskTitle = ""
     
     var body: some View {
         ScrollView {
@@ -248,6 +252,51 @@ struct TaskDetailView: View {
                 
                 Divider()
                 
+                // 子任务
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("子任务")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if isEditing {
+                            Button(action: {
+                                showingAddSubtask = true
+                            }) {
+                                Label("添加", systemImage: "plus.circle")
+                                    .font(.subheadline)
+                            }
+                        }
+                    }
+                    
+                    if let subtasks = task.subtasks, !subtasks.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(subtasks, id: \.id) { subtask in
+                                SubtaskRowView(
+                                    subtask: subtask,
+                                    isEditing: isEditing,
+                                    onToggle: {
+                                        toggleSubtask(subtask)
+                                    },
+                                    onEdit: {
+                                        editingSubtask = subtask
+                                        editSubtaskTitle = subtask.title
+                                    },
+                                    onDelete: {
+                                        deleteSubtask(subtask)
+                                    }
+                                )
+                            }
+                        }
+                    } else {
+                        Text("暂无子任务")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal)
+                
+                Divider()
+                
                 // 时间信息
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -343,6 +392,33 @@ struct TaskDetailView: View {
         } message: {
             Text("确定要删除「\(task.title)」吗？此操作无法撤销。")
         }
+        .alert("添加子任务", isPresented: $showingAddSubtask) {
+            TextField("子任务标题", text: $newSubtaskTitle)
+            Button("取消", role: .cancel) {
+                newSubtaskTitle = ""
+            }
+            Button("添加") {
+                addSubtask()
+            }
+            .disabled(newSubtaskTitle.isEmpty)
+        } message: {
+            Text("请输入子任务标题")
+        }
+        .alert("编辑子任务", isPresented: Binding(
+            get: { editingSubtask != nil },
+            set: { if !$0 { editingSubtask = nil } }
+        )) {
+            TextField("子任务标题", text: $editSubtaskTitle)
+            Button("取消", role: .cancel) {
+                editingSubtask = nil
+            }
+            Button("保存") {
+                saveEditedSubtask()
+            }
+            .disabled(editSubtaskTitle.isEmpty)
+        } message: {
+            Text("请输入子任务标题")
+        }
         .alert(item: $errorHandler.currentError) { error in
             Alert(
                 title: Text(error.title),
@@ -416,5 +492,127 @@ struct TaskDetailView: View {
                 errorHandler.handle(error, context: "更新任务状态")
             }
         }
+    }
+    
+    // MARK: - Subtask Functions
+    
+    private func addSubtask() {
+        guard !newSubtaskTitle.isEmpty else { return }
+        
+        let subtask = Subtask(title: newSubtaskTitle)
+        subtask.parentTask = task
+        
+        if task.subtasks == nil {
+            task.subtasks = []
+        }
+        task.subtasks?.append(subtask)
+        task.updatedAt = Date()
+        
+        modelContext.insert(subtask)
+        
+        do {
+            try modelContext.save()
+            print("✅ 子任务已添加: \(newSubtaskTitle)")
+        } catch {
+            errorHandler.handle(error, context: "添加子任务")
+        }
+        
+        newSubtaskTitle = ""
+    }
+    
+    private func toggleSubtask(_ subtask: Subtask) {
+        withAnimation {
+            subtask.isCompleted.toggle()
+            task.updatedAt = Date()
+            
+            do {
+                try modelContext.save()
+            } catch {
+                subtask.isCompleted.toggle() // 回滚
+                errorHandler.handle(error, context: "更新子任务状态")
+            }
+        }
+    }
+    
+    private func deleteSubtask(_ subtask: Subtask) {
+        task.subtasks?.removeAll { $0.id == subtask.id }
+        task.updatedAt = Date()
+        modelContext.delete(subtask)
+        
+        do {
+            try modelContext.save()
+            print("✅ 子任务已删除")
+        } catch {
+            errorHandler.handle(error, context: "删除子任务")
+        }
+    }
+    
+    private func saveEditedSubtask() {
+        guard let subtask = editingSubtask, !editSubtaskTitle.isEmpty else {
+            editingSubtask = nil
+            return
+        }
+        
+        subtask.title = editSubtaskTitle
+        task.updatedAt = Date()
+        
+        do {
+            try modelContext.save()
+            print("✅ 子任务已编辑")
+        } catch {
+            errorHandler.handle(error, context: "编辑子任务")
+        }
+        
+        editingSubtask = nil
+    }
+}
+
+// MARK: - Subtask Row View
+struct SubtaskRowView: View {
+    let subtask: Subtask
+    let isEditing: Bool
+    let onToggle: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // 完成按钮
+            Button(action: onToggle) {
+                Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.body)
+                    .foregroundColor(subtask.isCompleted ? .green : .gray)
+            }
+            .buttonStyle(.plain)
+            
+            // 标题
+            Text(subtask.title)
+                .font(.body)
+                .strikethrough(subtask.isCompleted)
+                .foregroundColor(subtask.isCompleted ? .secondary : .primary)
+            
+            Spacer()
+            
+            // 编辑按钮
+            if isEditing {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(8)
     }
 }
