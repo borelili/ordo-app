@@ -28,9 +28,16 @@ struct ContentView: View {
     @State private var editName = ""
     @State private var editIcon = ""
     @State private var editColor = "blue"
-    @AppStorage("listDeleteBehavior") private var listDeleteBehavior: String = "unlink" // "unlink" or "cascade"
+    @AppStorage("listDeleteBehavior") private var listDeleteBehavior: String = "unlink" // "unlink" or "cascatade"
     @State private var showingSettings = false
     @State private var showingTagManagement = false
+    
+    // 批量操作相关状态
+    @State private var selectionMode = false
+    @State private var selectedTasks: Set<Task> = []
+    @State private var showingBatchMoveSheet = false
+    @State private var showingBatchDeleteConfirm = false
+    
     private let availableIcons = ["list.bullet","tray","bookmark","star","flag"]
     private let availableColors = ["blue","green","orange","red","purple","pink","gray"]
     
@@ -284,14 +291,28 @@ struct ContentView: View {
                 SearchBar(text: $searchText)
                     .padding()
                 
+                // 批量操作工具栏
+                if selectionMode && !selectedTasks.isEmpty {
+                    batchOperationToolbar
+                }
+                
                 // 任务列表
                 if filteredTasks.isEmpty {
                     emptyStateView
                 } else {
                     List {
                         ForEach(filteredTasks) { task in
-                            NavigationLink(destination: TaskDetailView(task: task)) {
-                                TaskRowView(task: task)
+                            if selectionMode {
+                                TaskRowView(
+                                    task: task,
+                                    selectionMode: selectionMode,
+                                    isSelected: selectedTasks.contains(task),
+                                    onSelectionToggle: { toggleTaskSelection(task) }
+                                )
+                            } else {
+                                NavigationLink(destination: TaskDetailView(task: task)) {
+                                    TaskRowView(task: task)
+                                }
                             }
                         }
                         .onDelete(perform: deleteTasks)
@@ -305,17 +326,59 @@ struct ContentView: View {
 #endif
             .toolbar {
 #if os(iOS)
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if selectionMode {
+                        Button("取消") {
+                            exitSelectionMode()
+                        }
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAddTask = true }) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
+                    if selectionMode {
+                        Button(selectedTasks.count == filteredTasks.count ? "取消全选" : "全选") {
+                            toggleSelectAll()
+                        }
+                    } else {
+                        Menu {
+                            Button(action: { showingAddTask = true }) {
+                                Label("新建任务", systemImage: "plus.circle")
+                            }
+                            Button(action: { enterSelectionMode() }) {
+                                Label("批量操作", systemImage: "checkmark.circle")
+                            }
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title2)
+                        }
                     }
                 }
 #else
                 ToolbarItem(placement: .automatic) {
-                    Button(action: { showingAddTask = true }) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
+                    if selectionMode {
+                        Button("取消") {
+                            exitSelectionMode()
+                        }
+                    }
+                }
+                
+                ToolbarItem(placement: .automatic) {
+                    if selectionMode {
+                        Button(selectedTasks.count == filteredTasks.count ? "取消全选" : "全选") {
+                            toggleSelectAll()
+                        }
+                    } else {
+                        Menu {
+                            Button(action: { showingAddTask = true }) {
+                                Label("新建任务", systemImage: "plus.circle")
+                            }
+                            Button(action: { enterSelectionMode() }) {
+                                Label("批量操作", systemImage: "checkmark.circle")
+                            }
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title2)
+                        }
                     }
                 }
 #endif
@@ -335,6 +398,95 @@ struct ContentView: View {
                 }
             )
         }
+    }
+    
+    // 批量操作工具栏
+    private var batchOperationToolbar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 20) {
+                // 已选择数量
+                Text("已选择 \(selectedTasks.count) 项")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                // 批量完成/未完成
+                Button(action: batchToggleCompletion) {
+                    Label(allSelectedCompleted ? "标记未完成" : "标记完成", systemImage: allSelectedCompleted ? "circle" : "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+                
+                // 批量移动
+                Button(action: { showingBatchMoveSheet = true }) {
+                    Label("移动到", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+                
+                // 批量删除
+                Button(role: .destructive, action: { showingBatchDeleteConfirm = true }) {
+                    Label("删除", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding()
+            Divider()
+        }
+#if os(macOS)
+        .background(Color(nsColor: .controlBackgroundColor))
+#else
+        .background(Color(.systemBackground))
+#endif
+        .sheet(isPresented: $showingBatchMoveSheet) {
+            batchMoveListPicker
+        }
+        .alert("确认删除", isPresented: $showingBatchDeleteConfirm) {
+            Button("取消", role: .cancel) { }
+            Button("删除", role: .destructive) {
+                batchDelete()
+            }
+        } message: {
+            Text("确定要删除选中的 \(selectedTasks.count) 个任务吗？此操作无法撤销。")
+        }
+    }
+    
+    // 批量移动列表选择器
+    private var batchMoveListPicker: some View {
+        NavigationView {
+            List {
+                ForEach(taskLists.sorted { $0.sortOrder < $1.sortOrder }) { list in
+                    Button(action: {
+                        batchMoveTo(list: list)
+                        showingBatchMoveSheet = false
+                    }) {
+                        HStack {
+                            Image(systemName: list.icon)
+                                .foregroundColor(list.colorValue)
+                            Text(list.name)
+                            Spacer()
+                            if selectedList?.id == list.id {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .navigationTitle("移动到列表")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        showingBatchMoveSheet = false
+                    }
+                }
+            }
+        }
+    }
+    
+    private var allSelectedCompleted: Bool {
+        !selectedTasks.isEmpty && selectedTasks.allSatisfy { $0.isCompleted }
     }
     
     private var emptyStateView: some View {
@@ -523,6 +675,107 @@ struct ContentView: View {
             errorHandler.handle(error, context: "删除任务")
         }
     }
+    
+    // MARK: - 批量操作方法
+    
+    private func enterSelectionMode() {
+        selectionMode = true
+        selectedTasks.removeAll()
+    }
+    
+    private func exitSelectionMode() {
+        selectionMode = false
+        selectedTasks.removeAll()
+    }
+    
+    private func toggleTaskSelection(_ task: Task) {
+        if selectedTasks.contains(task) {
+            selectedTasks.remove(task)
+        } else {
+            selectedTasks.insert(task)
+        }
+    }
+    
+    private func toggleSelectAll() {
+        if selectedTasks.count == filteredTasks.count {
+            selectedTasks.removeAll()
+        } else {
+            selectedTasks = Set(filteredTasks)
+        }
+    }
+    
+    private func batchToggleCompletion() {
+        guard !selectedTasks.isEmpty else { return }
+        
+        let shouldComplete = !allSelectedCompleted
+        
+        for task in selectedTasks {
+            let wasCompleted = task.isCompleted
+            task.isCompleted = shouldComplete
+            task.updatedAt = Date()
+            
+            // 处理通知
+            if !wasCompleted && task.isCompleted {
+                // 任务完成，取消通知
+                if task.reminderDate != nil {
+                    NotificationManager.shared.cancelNotification(for: task)
+                }
+            } else if wasCompleted && !task.isCompleted {
+                // 任务取消完成，恢复未来的通知
+                if let reminderDate = task.reminderDate, reminderDate > Date() {
+                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate)
+                }
+            }
+        }
+        
+        do {
+            try modelContext.save()
+            exitSelectionMode()
+        } catch {
+            errorHandler.handle(error, context: "批量\(shouldComplete ? "完成" : "取消完成")任务")
+        }
+    }
+    
+    private func batchMoveTo(list: TaskList) {
+        guard !selectedTasks.isEmpty else { return }
+        
+        for task in selectedTasks {
+            task.taskList = list
+            task.updatedAt = Date()
+        }
+        
+        do {
+            try modelContext.save()
+            exitSelectionMode()
+        } catch {
+            errorHandler.handle(error, context: "批量移动任务")
+        }
+    }
+    
+    private func batchDelete() {
+        guard !selectedTasks.isEmpty else { return }
+        
+        let tasksToDelete = Array(selectedTasks)
+        
+        // 删除任务
+        for task in tasksToDelete {
+            modelContext.delete(task)
+        }
+        
+        // 先保存，成功后再取消通知
+        do {
+            try modelContext.save()
+            // 保存成功后取消通知
+            for task in tasksToDelete {
+                if task.reminderDate != nil {
+                    NotificationManager.shared.cancelNotification(for: task)
+                }
+            }
+            exitSelectionMode()
+        } catch {
+            errorHandler.handle(error, context: "批量删除任务")
+        }
+    }
 }
 
 // SearchBar 组件
@@ -561,17 +814,34 @@ struct TaskRowView: View {
     @Environment(\.modelContext) private var modelContext
     @Bindable var task: Task
     
+    // 批量操作相关参数
+    var selectionMode: Bool = false
+    var isSelected: Bool = false
+    var onSelectionToggle: (() -> Void)? = nil
+    
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            // 完成按钮
-            Button(action: {
-                toggleTaskCompletion()
-            }) {
-                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundColor(task.isCompleted ? .green : .gray)
+            // 选择模式下的选择框
+            if selectionMode {
+                Button(action: {
+                    onSelectionToggle?()
+                }) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundColor(isSelected ? .blue : .gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                // 正常模式下的完成按钮
+                Button(action: {
+                    toggleTaskCompletion()
+                }) {
+                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundColor(task.isCompleted ? .green : .gray)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
             
             VStack(alignment: .leading, spacing: 6) {
                 // 标题
