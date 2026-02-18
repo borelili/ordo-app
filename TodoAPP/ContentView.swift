@@ -10,6 +10,7 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var errorHandler = ErrorHandler.shared
     @Query private var tasks: [Task]
     @Query private var taskLists: [TaskList]
@@ -41,6 +42,34 @@ struct ContentView: View {
     
     private let availableIcons = ["list.bullet","tray","bookmark","star","flag"]
     private let availableColors = ["blue","green","orange","red","purple","pink","gray"]
+    
+    // 导航目标枚举（用于 iPhone NavigationStack）
+    enum SmartListDestination: Hashable {
+        case filter(TaskFilter)
+        case customList(TaskList)
+        
+        func hash(into hasher: inout Hasher) {
+            switch self {
+            case .filter(let filter):
+                hasher.combine("filter")
+                hasher.combine(filter)
+            case .customList(let list):
+                hasher.combine("list")
+                hasher.combine(list.id)
+            }
+        }
+        
+        static func == (lhs: SmartListDestination, rhs: SmartListDestination) -> Bool {
+            switch (lhs, rhs) {
+            case (.filter(let lf), .filter(let rf)):
+                return lf == rf
+            case (.customList(let ll), .customList(let rl)):
+                return ll.id == rl.id
+            default:
+                return false
+            }
+        }
+    }
     
     enum TaskFilter: String, CaseIterable {
         case all = "全部"
@@ -126,12 +155,266 @@ struct ContentView: View {
     }
     
     var body: some View {
+        // iPhone（compact）使用 NavigationStack，iPad/macOS 使用 NavigationSplitView
+        if horizontalSizeClass == .compact {
+            iphoneNavigationView
+        } else {
+            ipadMacNavigationView
+        }
+    }
+    
+    // MARK: - iPhone Navigation View
+    
+    @ViewBuilder
+    private var iphoneNavigationView: some View {
+        NavigationStack {
+            List {
+                // 智能列表 Section
+                Section {
+                    ForEach(TaskFilter.allCases, id: \.self) { filter in
+                        NavigationLink(value: SmartListDestination.filter(filter)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: iconForFilter(filter))
+                                    .font(.body.weight(.medium))
+                                    .foregroundColor(colorForFilter(filter))
+                                    .frame(width: 24)
+                                
+                                Text(filter.rawValue)
+                                    .font(.body)
+                                
+                                Spacer()
+                                
+                                // 任务数量徽章
+                                let count = countForFilter(filter)
+                                if count > 0 {
+                                    Text("\(count)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(colorForFilter(filter).opacity(0.8))
+                                        )
+                                }
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            print("[DEBUG] iPhone tap: \(filter.rawValue)")
+                        }
+                    }
+                } header: {
+                    Text("智能列表")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+                
+                // 自定义列表 Section
+                Section {
+                    ForEach(taskLists.sorted { $0.sortOrder < $1.sortOrder }, id: \.id) { list in
+                        NavigationLink(value: SmartListDestination.customList(list)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: list.icon)
+                                    .font(.body.weight(.medium))
+                                    .foregroundColor(list.colorValue)
+                                    .frame(width: 24)
+                                
+                                Text(list.name)
+                                    .font(.body)
+                                
+                                Spacer()
+                                
+                                // 未完成任务数量
+                                let count = list.tasks?.filter { !$0.isCompleted }.count ?? 0
+                                if count > 0 {
+                                    Text("\(count)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(list.colorValue.opacity(0.8))
+                                        )
+                                }
+                            }
+                        }
+                        .contextMenu {
+                            Button {
+                                editingList = list
+                                editName = list.name
+                                editIcon = list.icon
+                                editColor = list.color
+                                showingEditList = true
+                            } label: {
+                                Label("编辑", systemImage: "slider.horizontal.3")
+                            }
+                            
+                            Button {
+                                renamingList = list
+                                renameText = list.name
+                                showingRenameList = true
+                            } label: {
+                                Label("重命名", systemImage: "pencil")
+                            }
+                            
+                            Button(role: .destructive) {
+                                deleteSpecificList(list)
+                            } label: {
+                                Label("删除列表", systemImage: "trash")
+                            }
+                        }
+                    }
+                    .onMove(perform: moveList)
+                    .onDelete(perform: deleteList)
+                    
+                    Divider()
+                        .padding(.vertical, 4)
+                    
+                    Button(action: addNewList) {
+                        Label("新建列表", systemImage: "plus.circle.fill")
+                            .font(.body.weight(.medium))
+                    }
+                    .foregroundColor(.blue)
+                    
+                    Button(action: { showingTagManagement = true }) {
+                        Label("标签管理", systemImage: "tag.fill")
+                            .font(.body.weight(.medium))
+                    }
+                    .foregroundColor(.orange)
+                    
+                    Button(action: { showingSettings = true }) {
+                        Label("列表设置", systemImage: "gearshape.fill")
+                            .font(.body.weight(.medium))
+                    }
+                    .foregroundColor(.gray)
+                } header: {
+                    Text("我的列表")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("待办事项")
+            .navigationDestination(for: SmartListDestination.self) { destination in
+                switch destination {
+                case .filter(let filter):
+                    taskListContentView(filter: filter, list: nil)
+                case .customList(let list):
+                    taskListContentView(filter: .all, list: list)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    EditButton()
+                }
+            }
+            .alert("新建列表", isPresented: $showingAddList) {
+                TextField("列表名称", text: $newListName)
+                Button("取消", role: .cancel) {
+                    newListName = ""
+                }
+                Button("创建") {
+                    createNewList()
+                }
+            } message: {
+                Text("请输入列表名称")
+            }
+            .alert("重命名列表", isPresented: $showingRenameList) {
+                TextField("新名称", text: $renameText)
+                Button("取消", role: .cancel) {
+                    renamingList = nil
+                    renameText = ""
+                }
+                Button("确认") {
+                    doRenameList()
+                }
+            } message: {
+                Text("输入新的列表名称")
+            }
+            .sheet(isPresented: $showingSettings) {
+                NavigationStack {
+                    Form {
+                        Section("删除列表时") {
+                            Picker("操作", selection: $listDeleteBehavior) {
+                                Text("解除关联（保留任务）").tag("unlink")
+                                Text("级联删除任务").tag("cascade")
+                            }
+                            .pickerStyle(.inline)
+                            Text("解除关联会把任务的所属列表设为空；级联删除会同时删除该列表下所有任务。推荐使用解除关联以免误删任务。")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .navigationTitle("列表设置")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("关闭") { showingSettings = false }
+                        }
+                    }
+                }
+                .environment(\.modelContext, modelContext)
+            }
+            .sheet(isPresented: $showingTagManagement) {
+                TagManagementView()
+                    .environment(\.modelContext, modelContext)
+            }
+            .sheet(isPresented: $showingEditList) {
+                NavigationStack {
+                    Form {
+                        Section("基本信息") {
+                            TextField("名称", text: $editName)
+                            Picker("图标", selection: $editIcon) {
+                                ForEach(availableIcons, id: \.self) { ic in
+                                    HStack {
+                                        Image(systemName: ic)
+                                        Text(ic)
+                                    }
+                                    .tag(ic)
+                                }
+                            }
+                            Picker("颜色", selection: $editColor) {
+                                ForEach(availableColors, id: \.self) { c in
+                                    HStack {
+                                        Circle().fill(TaskList(name: "", color: c).colorValue).frame(width: 12, height: 12)
+                                        Text(c)
+                                    }
+                                    .tag(c)
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("编辑列表")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("保存") {
+                                doEditList()
+                                showingEditList = false
+                            }
+                        }
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") {
+                                showingEditList = false
+                            }
+                        }
+                    }
+                }
+                .environment(\.modelContext, modelContext)
+            }
+        }
+    }
+    
+    // MARK: - iPad/macOS Navigation View
+    
+    @ViewBuilder
+    private var ipadMacNavigationView: some View {
         NavigationSplitView {
             // 侧边栏
             List(selection: $selectedList) {
                 Section {
                     ForEach(TaskFilter.allCases, id: \.self) { filter in
                         Button(action: {
+                            print("[DEBUG] Button action: \(filter.rawValue)")
                             selectedFilter = filter
                             selectedList = nil
                         }) {
@@ -160,6 +443,13 @@ struct ContentView: View {
                                         )
                                 }
                             }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            print("[DEBUG] tap: \(filter.rawValue)")
+                            selectedFilter = filter
+                            selectedList = nil
                         }
                         .listRowBackground(
                             selectedFilter == filter && selectedList == nil 
@@ -374,117 +664,8 @@ struct ContentView: View {
                 .environment(\.modelContext, modelContext)
             }
         } detail: {
-            // 主视图
-            VStack(spacing: 0) {
-                // 搜索栏
-                SearchBar(text: $searchText)
-                    .padding()
-                
-                // 批量操作工具栏
-                if selectionMode && !selectedTasks.isEmpty {
-                    batchOperationToolbar
-                }
-                
-                // 任务列表
-                if filteredTasks.isEmpty {
-                    emptyStateView
-                } else {
-                    List {
-                        ForEach(filteredTasks) { task in
-                            if selectionMode {
-                                TaskRowView(
-                                    task: task,
-                                    selectionMode: selectionMode,
-                                    isSelected: selectedTasks.contains(task),
-                                    onSelectionToggle: { toggleTaskSelection(task) }
-                                )
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowBackground(Color.clear)
-                            } else {
-                                NavigationLink(destination: TaskDetailView(task: task)) {
-                                    TaskRowView(task: task)
-                                }
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowBackground(Color.clear)
-                            }
-                        }
-                        .onMove(perform: moveTasks)
-                        .onDelete(perform: deleteTasks)
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                }
-            }
-            .navigationTitle(selectedList?.name ?? selectedFilter.rawValue)
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if selectionMode {
-                        Button("取消") {
-                            exitSelectionMode()
-                        }
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if selectionMode {
-                        Button(selectedTasks.count == filteredTasks.count ? "取消全选" : "全选") {
-                            toggleSelectAll()
-                        }
-                    } else {
-                        Menu {
-                            Button(action: { showingAddTask = true }) {
-                                Label("新建任务", systemImage: "plus.circle")
-                            }
-                            Button(action: { enterSelectionMode() }) {
-                                Label("批量操作", systemImage: "checkmark.circle")
-                            }
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title2)
-                        }
-                    }
-                }
-#else
-                ToolbarItem(placement: .automatic) {
-                    if selectionMode {
-                        Button("取消") {
-                            exitSelectionMode()
-                        }
-                    }
-                }
-                
-                ToolbarItem(placement: .automatic) {
-                    if selectionMode {
-                        Button(selectedTasks.count == filteredTasks.count ? "取消全选" : "全选") {
-                            toggleSelectAll()
-                        }
-                    } else {
-                        Menu {
-                            Button(action: { showingAddTask = true }) {
-                                Label("新建任务", systemImage: "plus.circle")
-                            }
-                            Button(action: { enterSelectionMode() }) {
-                                Label("批量操作", systemImage: "checkmark.circle")
-                            }
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title2)
-                        }
-                    }
-                }
-#endif
-            }
-            .sheet(isPresented: $showingAddTask) {
-                AddTaskView(selectedList: selectedList)
-                    .environment(\.modelContext, modelContext)
-                    .environmentObject(errorHandler)
-            }
+            // 主视图 - 使用可复用的任务列表内容视图
+            taskListContentView(filter: selectedFilter, list: selectedList)
         }
         .alert(item: $errorHandler.currentError) { error in
             Alert(
@@ -504,6 +685,130 @@ struct ContentView: View {
         }
         #endif
     }
+    
+    // MARK: - Task List Content View (可复用)
+    
+    @ViewBuilder
+    private func taskListContentView(filter: TaskFilter, list: TaskList?) -> some View {
+        // 临时更新 selectedFilter 和 selectedList 以便筛选任务
+        let _ = {
+            self.selectedFilter = filter
+            self.selectedList = list
+        }()
+        
+        VStack(spacing: 0) {
+            // 搜索栏
+            SearchBar(text: $searchText)
+                .padding()
+            
+            // 批量操作工具栏
+            if selectionMode && !selectedTasks.isEmpty {
+                batchOperationToolbar
+            }
+            
+            // 任务列表
+            if filteredTasks.isEmpty {
+                emptyStateView
+            } else {
+                List {
+                    ForEach(filteredTasks) { task in
+                        if selectionMode {
+                            TaskRowView(
+                                task: task,
+                                selectionMode: selectionMode,
+                                isSelected: selectedTasks.contains(task),
+                                onSelectionToggle: { toggleTaskSelection(task) }
+                            )
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowBackground(Color.clear)
+                        } else {
+                            NavigationLink(destination: TaskDetailView(task: task)) {
+                                TaskRowView(task: task)
+                            }
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowBackground(Color.clear)
+                        }
+                    }
+                    .onMove(perform: moveTasks)
+                    .onDelete(perform: deleteTasks)
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle(list?.name ?? filter.rawValue)
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+#endif
+        .toolbar {
+#if os(iOS)
+            ToolbarItem(placement: .navigationBarLeading) {
+                if selectionMode {
+                    Button("取消") {
+                        exitSelectionMode()
+                    }
+                }
+            }
+            
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if selectionMode {
+                    Button(selectedTasks.count == filteredTasks.count ? "取消全选" : "全选") {
+                        toggleSelectAll()
+                    }
+                } else {
+                    Menu {
+                        Button(action: { showingAddTask = true }) {
+                            Label("新建任务", systemImage: "plus.circle")
+                        }
+                        Button(action: { enterSelectionMode() }) {
+                            Label("批量操作", systemImage: "checkmark.circle")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                    }
+                }
+            }
+#else
+            ToolbarItem(placement: .automatic) {
+                if selectionMode {
+                    Button("取消") {
+                        exitSelectionMode()
+                    }
+                }
+            }
+            
+            ToolbarItem(placement: .automatic) {
+                if selectionMode {
+                    Button(selectedTasks.count == filteredTasks.count ? "取消全选" : "全选") {
+                        toggleSelectAll()
+                    }
+                } else {
+                    Menu {
+                        Button(action: { showingAddTask = true }) {
+                            Label("新建任务", systemImage: "plus.circle")
+                        }
+                        Button(action: { enterSelectionMode() }) {
+                            Label("批量操作", systemImage: "checkmark.circle")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                    }
+                }
+            }
+#endif
+        }
+        .sheet(isPresented: $showingAddTask) {
+            AddTaskView(selectedList: list)
+                .environment(\.modelContext, modelContext)
+                .environmentObject(errorHandler)
+        }
+    }
+    
+    // MARK: - Batch Operation Toolbar
     
     // 批量操作工具栏
     private var batchOperationToolbar: some View {
