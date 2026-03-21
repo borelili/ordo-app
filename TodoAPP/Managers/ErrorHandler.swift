@@ -24,7 +24,9 @@ class ErrorHandler: ObservableObject {
                 originalError: error
             )
             self.showError = true
+            #if DEBUG
             print("❌ \(context): \(error)")
+            #endif
         }
     }
 }

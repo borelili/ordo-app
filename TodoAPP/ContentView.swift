@@ -11,25 +11,28 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var errorHandler = ErrorHandler.shared
     @Query private var tasks: [Task]
     @Query private var taskLists: [TaskList]
+    @Query private var tags: [Tag]
+    
+    /// 当前时间快照：每 60 秒通过 DateRefresher 自动刷新；回到前台时也立即刷新
+    @StateObject private var dateRefresher = DateRefresher()
+
+    private var currentDate: Date { dateRefresher.currentDate }
     
     @State private var showingAddTask = false
     @State private var searchText = ""
     @State private var selectedFilter: TaskFilter = .all
     @State private var selectedList: TaskList?
+    @State private var selectedTag: Tag?
     @State private var showingAddList = false
-    @State private var newListName = ""
     @State private var showingRenameList = false
     @State private var renamingList: TaskList?
     @State private var renameText = ""
-    @State private var showingEditList = false
     @State private var editingList: TaskList?
-    @State private var editName = ""
-    @State private var editIcon = ""
-    @State private var editColor = "blue"
-    @AppStorage("listDeleteBehavior") private var listDeleteBehavior: String = "unlink" // "unlink" or "cascatade"
+    @AppStorage("listDeleteBehavior") private var listDeleteBehavior: String = "cascade" // 已固定为 cascade
     @State private var showingSettings = false
     @State private var showingTagManagement = false
     
@@ -40,13 +43,14 @@ struct ContentView: View {
     @State private var showingBatchDeleteConfirm = false
     @State private var showingKeyboardShortcuts = false  // 快捷键帮助
     
-    private let availableIcons = ["list.bullet","tray","bookmark","star","flag"]
-    private let availableColors = ["blue","green","orange","red","purple","pink","gray"]
+    // iPhone push 导航路径
+    @State private var iphonePath: [SmartListDestination] = []
     
     // 导航目标枚举（用于 iPhone NavigationStack）
     enum SmartListDestination: Hashable {
         case filter(TaskFilter)
         case customList(TaskList)
+        case tag(Tag)
         
         func hash(into hasher: inout Hasher) {
             switch self {
@@ -56,6 +60,9 @@ struct ContentView: View {
             case .customList(let list):
                 hasher.combine("list")
                 hasher.combine(list.id)
+            case .tag(let tag):
+                hasher.combine("tag")
+                hasher.combine(tag.id)
             }
         }
         
@@ -65,6 +72,8 @@ struct ContentView: View {
                 return lf == rf
             case (.customList(let ll), .customList(let rl)):
                 return ll.id == rl.id
+            case (.tag(let lt), .tag(let rt)):
+                return lt.id == rt.id
             default:
                 return false
             }
@@ -98,51 +107,40 @@ struct ContentView: View {
             filtered = filtered.filter { $0.taskList?.id == selectedList.id }
         }
         
-        // 状态过滤
+        // 标签过滤（优先于状态过滤）
+        if let selectedTag = selectedTag {
+            filtered = filtered.filter { task in
+                task.tags?.contains(where: { $0.id == selectedTag.id }) == true && !task.isCompleted
+            }
+            return filtered.sorted {
+                if $0.order == $1.order { return $0.createdAt > $1.createdAt }
+                return $0.order < $1.order
+            }
+        }
+        
+        // 状态过滤（使用 SmartListFilter 集中管理）
         switch selectedFilter {
         case .all:
-            filtered = filtered.filter { !$0.isCompleted }
+            filtered = SmartListFilter.filterAll(filtered)
         case .today:
-            filtered = filtered.filter { task in
-                if task.isCompleted { return false }
-                // 截止日期是今天的任务
-                if let dueDate = task.dueDate {
-                    return Calendar.current.isDateInToday(dueDate)
-                }
-                // 今天创建且无截止日期的任务
-                return Calendar.current.isDateInToday(task.createdAt) && task.dueDate == nil
-            }
+            filtered = SmartListFilter.filterToday(filtered, now: currentDate)
         case .upcoming:
-            // 未来7天内到期的任务
-            filtered = filtered.filter { task in
-                if task.isCompleted { return false }
-                if let dueDate = task.dueDate {
-                    let now = Date()
-                    let sevenDaysLater = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
-                    return dueDate > now && dueDate <= sevenDaysLater
-                }
-                return false
-            }
+            filtered = SmartListFilter.filterUpcoming(filtered, now: currentDate)
         case .overdue:
-            // 已逾期的任务
-            filtered = filtered.filter { task in
-                if task.isCompleted { return false }
-                if let dueDate = task.dueDate {
-                    return dueDate < Date()
-                }
-                return false
-            }
+            filtered = SmartListFilter.filterOverdue(filtered, now: currentDate)
         case .scheduled:
-            filtered = filtered.filter { $0.dueDate != nil && !$0.isCompleted }
+            filtered = SmartListFilter.filterScheduled(filtered)
         case .flagged:
-            filtered = filtered.filter { 
-                ($0.priority == .high || $0.priority == .urgent) && !$0.isCompleted 
-            }
+            filtered = SmartListFilter.filterFlagged(filtered)
         case .noDate:
-            // 没有截止日期的未完成任务
-            filtered = filtered.filter { $0.dueDate == nil && !$0.isCompleted }
+            filtered = SmartListFilter.filterNoDate(filtered)
         case .completed:
-            filtered = filtered.filter { $0.isCompleted }
+            filtered = SmartListFilter.filterCompleted(filtered)
+        }
+        
+        // Upcoming 已经在 SmartListFilter 中排序，其他列表按 order 排序
+        if selectedFilter == .upcoming {
+            return filtered
         }
         
         // 按 order 排序，如果 order 相同则按创建时间降序
@@ -156,169 +154,54 @@ struct ContentView: View {
     
     var body: some View {
         // iPhone（compact）使用 NavigationStack，iPad/macOS 使用 NavigationSplitView
-        if horizontalSizeClass == .compact {
-            iphoneNavigationView
-        } else {
-            ipadMacNavigationView
+        Group {
+            if horizontalSizeClass == .compact {
+                iphoneNavigationView
+            } else {
+                ipadMacNavigationView
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                dateRefresher.refresh()
+            }
         }
     }
     
     // MARK: - iPhone Navigation View
     
-    @ViewBuilder
     private var iphoneNavigationView: some View {
-        NavigationStack {
-            List {
-                // 智能列表 Section
-                Section {
-                    ForEach(TaskFilter.allCases, id: \.self) { filter in
-                        NavigationLink(value: SmartListDestination.filter(filter)) {
-                            HStack(spacing: 12) {
-                                Image(systemName: iconForFilter(filter))
-                                    .font(.body.weight(.medium))
-                                    .foregroundColor(colorForFilter(filter))
-                                    .frame(width: 24)
-                                
-                                Text(filter.rawValue)
-                                    .font(.body)
-                                
-                                Spacer()
-                                
-                                // 任务数量徽章
-                                let count = countForFilter(filter)
-                                if count > 0 {
-                                    Text("\(count)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            Capsule()
-                                                .fill(colorForFilter(filter).opacity(0.8))
-                                        )
-                                }
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            print("[DEBUG] iPhone tap: \(filter.rawValue)")
-                        }
-                    }
-                } header: {
-                    Text("智能列表")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.secondary)
-                }
-                
-                // 自定义列表 Section
-                Section {
-                    ForEach(taskLists.sorted { $0.sortOrder < $1.sortOrder }, id: \.id) { list in
-                        NavigationLink(value: SmartListDestination.customList(list)) {
-                            HStack(spacing: 12) {
-                                Image(systemName: list.icon)
-                                    .font(.body.weight(.medium))
-                                    .foregroundColor(list.colorValue)
-                                    .frame(width: 24)
-                                
-                                Text(list.name)
-                                    .font(.body)
-                                
-                                Spacer()
-                                
-                                // 未完成任务数量
-                                let count = list.tasks?.filter { !$0.isCompleted }.count ?? 0
-                                if count > 0 {
-                                    Text("\(count)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            Capsule()
-                                                .fill(list.colorValue.opacity(0.8))
-                                        )
-                                }
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                editingList = list
-                                editName = list.name
-                                editIcon = list.icon
-                                editColor = list.color
-                                showingEditList = true
-                            } label: {
-                                Label("编辑", systemImage: "slider.horizontal.3")
-                            }
-                            
-                            Button {
-                                renamingList = list
-                                renameText = list.name
-                                showingRenameList = true
-                            } label: {
-                                Label("重命名", systemImage: "pencil")
-                            }
-                            
-                            Button(role: .destructive) {
-                                deleteSpecificList(list)
-                            } label: {
-                                Label("删除列表", systemImage: "trash")
-                            }
-                        }
-                    }
-                    .onMove(perform: moveList)
-                    .onDelete(perform: deleteList)
-                    
-                    Divider()
-                        .padding(.vertical, 4)
-                    
-                    Button(action: addNewList) {
-                        Label("新建列表", systemImage: "plus.circle.fill")
-                            .font(.body.weight(.medium))
-                    }
-                    .foregroundColor(.blue)
-                    
-                    Button(action: { showingTagManagement = true }) {
-                        Label("标签管理", systemImage: "tag.fill")
-                            .font(.body.weight(.medium))
-                    }
-                    .foregroundColor(.orange)
-                    
-                    Button(action: { showingSettings = true }) {
-                        Label("列表设置", systemImage: "gearshape.fill")
-                            .font(.body.weight(.medium))
-                    }
-                    .foregroundColor(.gray)
-                } header: {
-                    Text("我的列表")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.secondary)
-                }
-            }
+        NavigationStack(path: $iphonePath) {
+            SidebarHomeView(
+                selectedFilter: $selectedFilter,
+                selectedList: $selectedList,
+                selectedTag: $selectedTag,
+                editingList: $editingList,
+                showingAddList: $showingAddList,
+                showingTagManagement: $showingTagManagement,
+                showingSettings: $showingSettings,
+                renamingList: $renamingList,
+                renameText: $renameText,
+                showingRenameList: $showingRenameList,
+                currentDate: currentDate,
+                onDeleteList: deleteSpecificList,
+                onNavigate: { dest in iphonePath.append(dest) }
+            )
             .navigationTitle("待办事项")
+            .toolbarBackground(.hidden, for: .navigationBar)
             .navigationDestination(for: SmartListDestination.self) { destination in
                 switch destination {
                 case .filter(let filter):
-                    taskListContentView(filter: filter, list: nil)
+                    taskListContentView(filter: filter, list: nil, tag: nil)
                 case .customList(let list):
-                    taskListContentView(filter: .all, list: list)
+                    taskListContentView(filter: .all, list: list, tag: nil)
+                case .tag(let tag):
+                    taskListContentView(filter: .all, list: nil, tag: tag)
                 }
             }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-            }
-            .alert("新建列表", isPresented: $showingAddList) {
-                TextField("列表名称", text: $newListName)
-                Button("取消", role: .cancel) {
-                    newListName = ""
-                }
-                Button("创建") {
-                    createNewList()
-                }
-            } message: {
-                Text("请输入列表名称")
+            .sheet(isPresented: $showingAddList) {
+                EditListView(list: nil)
+                    .environment(\.modelContext, modelContext)
             }
             .alert("重命名列表", isPresented: $showingRenameList) {
                 TextField("新名称", text: $renameText)
@@ -336,12 +219,12 @@ struct ContentView: View {
                 NavigationStack {
                     Form {
                         Section("删除列表时") {
-                            Picker("操作", selection: $listDeleteBehavior) {
-                                Text("解除关联（保留任务）").tag("unlink")
-                                Text("级联删除任务").tag("cascade")
+                            HStack(spacing: 8) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                                Text("同时删除该列表下所有任务")
                             }
-                            .pickerStyle(.inline)
-                            Text("解除关联会把任务的所属列表设为空；级联删除会同时删除该列表下所有任务。推荐使用解除关联以免误删任务。")
+                            Text("删除列表时会级联删除其中所有任务，并自动取消相关提醒通知。此操作不可撤销。")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -359,48 +242,147 @@ struct ContentView: View {
                 TagManagementView()
                     .environment(\.modelContext, modelContext)
             }
-            .sheet(isPresented: $showingEditList) {
-                NavigationStack {
-                    Form {
-                        Section("基本信息") {
-                            TextField("名称", text: $editName)
-                            Picker("图标", selection: $editIcon) {
-                                ForEach(availableIcons, id: \.self) { ic in
-                                    HStack {
-                                        Image(systemName: ic)
-                                        Text(ic)
-                                    }
-                                    .tag(ic)
-                                }
-                            }
-                            Picker("颜色", selection: $editColor) {
-                                ForEach(availableColors, id: \.self) { c in
-                                    HStack {
-                                        Circle().fill(TaskList(name: "", color: c).colorValue).frame(width: 12, height: 12)
-                                        Text(c)
-                                    }
-                                    .tag(c)
-                                }
-                            }
-                        }
+            .sheet(item: $editingList) { list in
+                EditListView(list: list)
+                    .environment(\.modelContext, modelContext)
+            }
+            .alert(item: $errorHandler.currentError) { error in
+                Alert(
+                    title: Text(error.title),
+                    message: Text(error.message),
+                    dismissButton: .default(Text("确定")) {
+                        errorHandler.showError = false
                     }
-                    .navigationTitle("编辑列表")
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("保存") {
-                                doEditList()
-                                showingEditList = false
-                            }
-                        }
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("取消") {
-                                showingEditList = false
-                            }
-                        }
+                )
+            }
+        }
+    }
+    
+    // MARK: - iPad Tag Row Helper
+    
+    @ViewBuilder
+    private func ipadTagRow(tag: Tag) -> some View {
+        let badge = ListBadgeService.count(for: tag)
+        Button(action: {
+            selectedTag    = tag
+            selectedList   = nil
+            selectedFilter = .all
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: "tag.fill")
+                    .font(.body.weight(.medium))
+                    .foregroundColor(tag.colorValue)
+                    .frame(width: 24)
+                Text(tag.name)
+                    .font(.body)
+                Spacer()
+                if badge > 0 {
+                    Text("\(badge)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(tag.colorValue.opacity(0.8)))
+                }
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .listRowBackground(
+            selectedTag?.id == tag.id
+                ? tag.colorValue.opacity(0.15)
+                : Color.clear
+        )
+    }
+    
+    // MARK: - List Sections
+    
+    private var smartListSection: some View {
+        Section {
+            ForEach(TaskFilter.allCases, id: \.self) { filter in
+                NavigationLink(value: SmartListDestination.filter(filter)) {
+                    smartListRow(filter: filter)
+                }
+                .contentShape(Rectangle())
+            }
+        } header: {
+            Text("智能列表")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    @ViewBuilder
+    private var customListSection: some View {
+        Section {
+            ForEach(taskLists.sorted { $0.sortOrder < $1.sortOrder }, id: \.id) { list in
+                NavigationLink(value: SmartListDestination.customList(list)) {
+                    customListRow(list: list)
+                }
+                .contentShape(Rectangle())
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        deleteSpecificList(list)
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                    Button {
+                        editingList = list
+                    } label: {
+                        Label("编辑", systemImage: "slider.horizontal.3")
+                    }
+                    .tint(.blue)
+                }
+                .contextMenu {
+                    Button {
+                        editingList = list
+                    } label: {
+                        Label("编辑", systemImage: "slider.horizontal.3")
+                    }
+                    
+                    Button {
+                        renamingList = list
+                        renameText = list.name
+                        showingRenameList = true
+                    } label: {
+                        Label("重命名", systemImage: "pencil")
+                    }
+                    
+                    Button(role: .destructive) {
+                        deleteSpecificList(list)
+                    } label: {
+                        Label("删除列表", systemImage: "trash")
                     }
                 }
-                .environment(\.modelContext, modelContext)
             }
+            .onMove(perform: moveList)
+            .onDelete(perform: deleteList)
+        } header: {
+            Text("我的列表")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+
+        Section {
+            Button(action: addNewList) {
+                Label("新建列表", systemImage: "plus.circle.fill")
+                    .font(.body.weight(.medium))
+            }
+            .foregroundColor(.blue)
+            .contentShape(Rectangle())
+
+            Button(action: { showingTagManagement = true }) {
+                Label("标签管理", systemImage: "tag.fill")
+                    .font(.body.weight(.medium))
+            }
+            .foregroundColor(.orange)
+            .contentShape(Rectangle())
+
+            Button(action: { showingSettings = true }) {
+                Label("列表设置", systemImage: "gearshape.fill")
+                    .font(.body.weight(.medium))
+            }
+            .foregroundColor(.gray)
+            .contentShape(Rectangle())
         }
     }
     
@@ -414,7 +396,6 @@ struct ContentView: View {
                 Section {
                     ForEach(TaskFilter.allCases, id: \.self) { filter in
                         Button(action: {
-                            print("[DEBUG] Button action: \(filter.rawValue)")
                             selectedFilter = filter
                             selectedList = nil
                         }) {
@@ -447,7 +428,6 @@ struct ContentView: View {
                         .buttonStyle(PlainButtonStyle())
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            print("[DEBUG] tap: \(filter.rawValue)")
                             selectedFilter = filter
                             selectedList = nil
                         }
@@ -504,10 +484,6 @@ struct ContentView: View {
                         .contextMenu {
                             Button {
                                 editingList = list
-                                editName = list.name
-                                editIcon = list.icon
-                                editColor = list.color
-                                showingEditList = true
                             } label: {
                                 Label("编辑", systemImage: "slider.horizontal.3")
                             }
@@ -532,31 +508,40 @@ struct ContentView: View {
                     #if os(macOS)
                     // macOS 上通过 contextMenu 提供额外的操作选项
                     #endif
-                    
-                    Divider()
-                        .padding(.vertical, 4)
-                    
+                } header: {
+                    Text("我的列表")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+
+                Section {
+                    ForEach(tags, id: \.id) { tag in
+                        ipadTagRow(tag: tag)
+                    }
+                } header: {
+                    Text("我的标签")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+
+                Section {
                     Button(action: addNewList) {
                         Label("新建列表", systemImage: "plus.circle.fill")
                             .font(.body.weight(.medium))
                     }
                     .foregroundColor(.blue)
-                    
+
                     Button(action: { showingTagManagement = true }) {
                         Label("标签管理", systemImage: "tag.fill")
                             .font(.body.weight(.medium))
                     }
                     .foregroundColor(.orange)
-                    
+
                     Button(action: { showingSettings = true }) {
                         Label("列表设置", systemImage: "gearshape.fill")
                             .font(.body.weight(.medium))
                     }
                     .foregroundColor(.gray)
-                } header: {
-                    Text("我的列表")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.secondary)
                 }
             }
             .navigationTitle("待办事项")
@@ -567,16 +552,9 @@ struct ContentView: View {
                 }
             }
 #endif
-            .alert("新建列表", isPresented: $showingAddList) {
-                TextField("列表名称", text: $newListName)
-                Button("取消", role: .cancel) {
-                    newListName = ""
-                }
-                Button("创建") {
-                    createNewList()
-                }
-            } message: {
-                Text("请输入列表名称")
+            .sheet(isPresented: $showingAddList) {
+                EditListView(list: nil)
+                    .environment(\.modelContext, modelContext)
             }
 
             .alert("重命名列表", isPresented: $showingRenameList) {
@@ -596,12 +574,12 @@ struct ContentView: View {
                 NavigationStack {
                     Form {
                         Section("删除列表时") {
-                            Picker("操作", selection: $listDeleteBehavior) {
-                                Text("解除关联（保留任务）").tag("unlink")
-                                Text("级联删除任务").tag("cascade")
+                            HStack(spacing: 8) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                                Text("同时删除该列表下所有任务")
                             }
-                            .pickerStyle(.inline)
-                            Text("解除关联会把任务的所属列表设为空；级联删除会同时删除该列表下所有任务。推荐使用解除关联以免误删任务。")
+                            Text("删除列表时会级联删除其中所有任务，并自动取消相关提醒通知。此操作不可撤销。")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -621,51 +599,13 @@ struct ContentView: View {
                     .environment(\.modelContext, modelContext)
             }
 
-            .sheet(isPresented: $showingEditList) {
-                NavigationStack {
-                    Form {
-                        Section("基本信息") {
-                            TextField("名称", text: $editName)
-                            Picker("图标", selection: $editIcon) {
-                                ForEach(availableIcons, id: \.self) { ic in
-                                    HStack {
-                                        Image(systemName: ic)
-                                        Text(ic)
-                                    }
-                                    .tag(ic)
-                                }
-                            }
-                            Picker("颜色", selection: $editColor) {
-                                ForEach(availableColors, id: \.self) { c in
-                                    HStack {
-                                        Circle().fill(TaskList(name: "", color: c).colorValue).frame(width: 12, height: 12)
-                                        Text(c)
-                                    }
-                                    .tag(c)
-                                }
-                            }
-                        }
-                    }
-                    .navigationTitle("编辑列表")
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("保存") {
-                                doEditList()
-                                showingEditList = false
-                            }
-                        }
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("取消") {
-                                showingEditList = false
-                            }
-                        }
-                    }
-                }
-                .environment(\.modelContext, modelContext)
+            .sheet(item: $editingList) { list in
+                EditListView(list: list)
+                    .environment(\.modelContext, modelContext)
             }
         } detail: {
             // 主视图 - 使用可复用的任务列表内容视图
-            taskListContentView(filter: selectedFilter, list: selectedList)
+            taskListContentView(filter: selectedFilter, list: selectedList, tag: selectedTag)
         }
         .alert(item: $errorHandler.currentError) { error in
             Alert(
@@ -689,11 +629,12 @@ struct ContentView: View {
     // MARK: - Task List Content View (可复用)
     
     @ViewBuilder
-    private func taskListContentView(filter: TaskFilter, list: TaskList?) -> some View {
-        // 临时更新 selectedFilter 和 selectedList 以便筛选任务
+    private func taskListContentView(filter: TaskFilter, list: TaskList?, tag: Tag? = nil) -> some View {
+        // 更新 selectedFilter / selectedList / selectedTag 以便 filteredTasks 正确筛选
         let _ = {
             self.selectedFilter = filter
-            self.selectedList = list
+            self.selectedList   = list
+            self.selectedTag    = tag
         }()
         
         VStack(spacing: 0) {
@@ -736,11 +677,17 @@ struct ContentView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                // 统一底部避让：直接施加到任务 List
+                .safeAreaInset(edge: .bottom) {
+                    Color.clear.frame(height: DS.homeBottomInset)
+                }
             }
         }
-        .navigationTitle(list?.name ?? filter.rawValue)
+        .navigationTitle(tag.map { "# \($0.name)" } ?? list?.name ?? filter.rawValue)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
+        .background(Color.clear)
+        .toolbarBackground(.hidden, for: .navigationBar)
 #endif
         .toolbar {
 #if os(iOS)
@@ -975,45 +922,87 @@ struct ContentView: View {
     }
     
     private func countForFilter(_ filter: TaskFilter) -> Int {
+        // 统一使用 SmartListFilter，确保 badge 数量与页面展示一致
         switch filter {
         case .all:
-            return tasks.filter { !$0.isCompleted }.count
+            return SmartListFilter.filterAll(tasks).count
         case .today:
-            return tasks.filter { task in
-                if task.isCompleted { return false }
-                if let dueDate = task.dueDate {
-                    return Calendar.current.isDateInToday(dueDate)
-                }
-                return Calendar.current.isDateInToday(task.createdAt) && task.dueDate == nil
-            }.count
+            return SmartListFilter.filterToday(tasks, now: currentDate).count
         case .upcoming:
-            return tasks.filter { task in
-                if task.isCompleted { return false }
-                if let dueDate = task.dueDate {
-                    let now = Date()
-                    let sevenDaysLater = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
-                    return dueDate > now && dueDate <= sevenDaysLater
-                }
-                return false
-            }.count
+            return SmartListFilter.filterUpcoming(tasks, now: currentDate).count
         case .overdue:
-            return tasks.filter { task in
-                if task.isCompleted { return false }
-                if let dueDate = task.dueDate {
-                    return dueDate < Date()
-                }
-                return false
-            }.count
+            return SmartListFilter.filterOverdue(tasks, now: currentDate).count
         case .scheduled:
-            return tasks.filter { $0.dueDate != nil && !$0.isCompleted }.count
+            return SmartListFilter.filterScheduled(tasks).count
         case .flagged:
-            return tasks.filter { 
-                ($0.priority == .high || $0.priority == .urgent) && !$0.isCompleted 
-            }.count
+            return SmartListFilter.filterFlagged(tasks).count
         case .noDate:
-            return tasks.filter { $0.dueDate == nil && !$0.isCompleted }.count
+            return SmartListFilter.filterNoDate(tasks).count
         case .completed:
-            return tasks.filter { $0.isCompleted }.count
+            return SmartListFilter.filterCompleted(tasks).count
+        }
+    }
+    
+    // MARK: - Helper Views
+    
+    private func smartListRow(filter: TaskFilter) -> some View {
+        smartListRowContent(filter: filter)
+    }
+    
+    private func smartListRowContent(filter: TaskFilter) -> some View {
+        let count = countForFilter(filter)
+        let color = colorForFilter(filter)
+        let icon = iconForFilter(filter)
+        
+        return HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.body.weight(.medium))
+                .foregroundColor(color)
+                .frame(width: 24)
+            
+            Text(filter.rawValue)
+                .font(.body)
+            
+            Spacer()
+            
+            if count > 0 {
+                Text("\(count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(color.opacity(0.8)))
+            }
+        }
+    }
+    
+    private func customListRow(list: TaskList) -> some View {
+        customListRowContent(list: list)
+    }
+    
+    private func customListRowContent(list: TaskList) -> some View {
+        let count = list.tasks?.filter { !$0.isCompleted }.count ?? 0
+        let color = list.colorValue
+        
+        return HStack(spacing: 12) {
+            Image(systemName: list.icon)
+                .font(.body.weight(.medium))
+                .foregroundColor(color)
+                .frame(width: 24)
+            
+            Text(list.name)
+                .font(.body)
+            
+            Spacer()
+            
+            if count > 0 {
+                Text("\(count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(color.opacity(0.8)))
+            }
         }
     }
     
@@ -1021,19 +1010,6 @@ struct ContentView: View {
         showingAddList = true
     }
     
-    private func createNewList() {
-        guard !newListName.isEmpty else { return }
-        let newList = TaskList(name: newListName)
-        modelContext.insert(newList)
-        do {
-            try modelContext.save()
-            print("✅ 创建列表: \(newListName)")
-        } catch {
-            errorHandler.handle(error, context: "创建列表")
-        }
-        newListName = ""
-    }
-
     private func doRenameList() {
         guard let list = renamingList, !renameText.isEmpty else { return }
         list.name = renameText
@@ -1044,19 +1020,6 @@ struct ContentView: View {
         }
         renamingList = nil
         renameText = ""
-    }
-
-    private func doEditList() {
-        guard let list = editingList else { return }
-        list.name = editName
-        list.icon = editIcon
-        list.color = editColor
-        do {
-            try modelContext.save()
-        } catch {
-            errorHandler.handle(error, context: "编辑列表")
-        }
-        editingList = nil
     }
 
     private func moveList(from source: IndexSet, to destination: Int) {
@@ -1083,59 +1046,65 @@ struct ContentView: View {
     }
     
     private func deleteSpecificList(_ list: TaskList) {
-        // 先获取任务的不可变副本
         let tasksInList = Array(list.tasks ?? [])
-        
-        if listDeleteBehavior == "cascade" {
-            // 级联删除：先删除所有任务
-            for task in tasksInList {
-                // 取消关联的通知
-                if task.reminderDate != nil {
-                    NotificationManager.shared.cancelNotification(for: task)
-                }
-                modelContext.delete(task)
-            }
-        } else {
-            // 解除关联（默认）
-            for task in tasksInList {
-                task.taskList = nil
-            }
+
+        // ① 删除前捕获通知 identifier（对象删除后 .id 可能失效）
+        let notificationIds = tasksInList.compactMap { task -> String? in
+            task.reminderDate != nil ? task.id.uuidString : nil
         }
-        
-        // 删除列表
+
+        #if DEBUG
+        print("🗑️ [DeleteList] 列表: '\(list.name)'  任务数: \(tasksInList.count)  有通知任务: \(notificationIds.count)")
+        #endif
+
+        // ② 取消所有通知（在 delete 之前）
+        NotificationManager.shared.cancelNotifications(withIdentifiers: notificationIds,
+                                                       label: "list:\(list.name)")
+
+        // ③ deleteRule = .cascade：删除 list 时 SwiftData 自动级联删除所有任务
         modelContext.delete(list)
-        
-        // 清除当前选择
+
+        // ④ 清除选中状态
         if selectedList?.id == list.id {
             selectedList = nil
         }
-        
-        // 保存
+
+        // ⑤ 持久化
         do {
             try modelContext.save()
+            #if DEBUG
+            // 验证残留——SwiftData @Query 会自动更新，此处做额外日志确认
+            print("   ✅ 保存成功，@Query tasks 会在下帧自动刷新")
+            #endif
         } catch {
             errorHandler.handle(error, context: "删除列表")
         }
     }
     
     private func deleteTasks(offsets: IndexSet) {
-        // 先获取要删除的任务对象引用，避免数组越界
+        // ① 先用对象引用捕获要删除的任务（避免 index 越界）
         let tasksToDelete = offsets.map { filteredTasks[$0] }
-        
-        // 安全删除
+
+        // ② 删除前捕获通知 identifier（SwiftData delete 后对象可能失效导致读取 .id 不可靠）
+        let notificationIds = tasksToDelete.compactMap { task -> String? in
+            task.reminderDate != nil ? task.id.uuidString : nil
+        }
+
+        #if DEBUG
+        print("🗑️ [DeleteTask] 删除任务数: \(tasksToDelete.count)  有通知: \(notificationIds.count)")
+        #endif
+
+        // ③ 取消通知（在 delete 之前，identifier 仍然有效）
+        NotificationManager.shared.cancelNotifications(withIdentifiers: notificationIds)
+
+        // ④ 删除对象
         for task in tasksToDelete {
             modelContext.delete(task)
         }
-        
-        // 先保存，成功后再取消通知（避免保存失败时通知已消失）
+
+        // ⑤ 持久化
         do {
             try modelContext.save()
-            // 保存成功后取消通知
-            for task in tasksToDelete {
-                if task.reminderDate != nil {
-                    NotificationManager.shared.cancelNotification(for: task)
-                }
-            }
         } catch {
             errorHandler.handle(error, context: "删除任务")
         }
@@ -1188,11 +1157,13 @@ struct ContentView: View {
             } else if wasCompleted && !task.isCompleted {
                 // 任务取消完成，恢复未来的通知（静默处理权限）
                 if let reminderDate = task.reminderDate, reminderDate > Date() {
-                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate) { result in
+                    NotificationManager.shared.scheduleNotification(for: task) { result in
                         if case .failure = result {
                             // 权限被拒绝，静默清除 reminderDate
                             task.reminderDate = nil
+                            #if DEBUG
                             print("⚠️ 通知权限不足，已清除任务 \(task.title) 的提醒时间")
+                            #endif
                         }
                     }
                 }
@@ -1201,6 +1172,20 @@ struct ContentView: View {
         
         do {
             try modelContext.save()
+            #if DEBUG
+            let debugNow = Date()
+            print("[BatchToggle] shouldComplete=\(shouldComplete) count=\(selectedTasks.count)")
+            for task in selectedTasks {
+                let isOverdueResult = task.dueDate.map { $0 < debugNow } ?? false
+                let toList: String = {
+                    if task.isCompleted { return "已完成" }
+                    if isOverdueResult { return "已逾期" }
+                    if task.dueDate == nil { return "全部/无日期" }
+                    return "全部/已计划/即将到来"
+                }()
+                print("  id=\(task.id.uuidString.prefix(8)) isCompleted=\(task.isCompleted) dueDate=\(task.dueDate.map { String(describing: $0) } ?? "nil") isOverdue=\(isOverdueResult) → \(toList)")
+            }
+            #endif
             exitSelectionMode()
         } catch {
             errorHandler.handle(error, context: "批量\(shouldComplete ? "完成" : "取消完成")任务")
@@ -1227,21 +1212,27 @@ struct ContentView: View {
         guard !selectedTasks.isEmpty else { return }
         
         let tasksToDelete = Array(selectedTasks)
-        
-        // 删除任务
+
+        // ① 删除前捕获通知 identifier
+        let notificationIds = tasksToDelete.compactMap { task -> String? in
+            task.reminderDate != nil ? task.id.uuidString : nil
+        }
+
+        #if DEBUG
+        print("🗑️ [BatchDelete] 任务数: \(tasksToDelete.count)  有通知: \(notificationIds.count)")
+        #endif
+
+        // ② 先取消通知（identifier 在删除前仍有效）
+        NotificationManager.shared.cancelNotifications(withIdentifiers: notificationIds)
+
+        // ③ 删除对象
         for task in tasksToDelete {
             modelContext.delete(task)
         }
-        
-        // 先保存，成功后再取消通知
+
+        // ④ 持久化
         do {
             try modelContext.save()
-            // 保存成功后取消通知
-            for task in tasksToDelete {
-                if task.reminderDate != nil {
-                    NotificationManager.shared.cancelNotification(for: task)
-                }
-            }
             exitSelectionMode()
         } catch {
             errorHandler.handle(error, context: "批量删除任务")
@@ -1376,11 +1367,15 @@ struct SearchBar: View {
 struct TaskRowView: View {
     @Environment(\.modelContext) private var modelContext
     @Bindable var task: Task
-    
+
     // 批量操作相关参数
     var selectionMode: Bool = false
     var isSelected: Bool = false
     var onSelectionToggle: (() -> Void)? = nil
+
+    // 完成动画状态
+    @State private var sparkleActive = false
+    @State private var previewCompleted = false
     
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -1397,16 +1392,26 @@ struct TaskRowView: View {
                 .buttonStyle(PlainButtonStyle())
             } else {
                 // 正常模式下的完成按钮
-                Button(action: {
-                    toggleTaskCompletion()
-                }) {
-                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.title2)
-                        .foregroundColor(task.isCompleted ? .green : .gray.opacity(0.5))
-                        .symbolRenderingMode(.hierarchical)
+                ZStack {
+                    Button(action: {
+                        handleCompletionTap()
+                    }) {
+                        Image(systemName: (task.isCompleted || previewCompleted) ? "checkmark.circle.fill" : "circle")
+                            .font(.title2)
+                            .foregroundColor((task.isCompleted || previewCompleted) ? .green : .gray.opacity(0.5))
+                            .symbolRenderingMode(.hierarchical)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: task.isCompleted || previewCompleted)
+                    // VoiceOver：动态描述当前状态
+                    .accessibilityLabel(task.isCompleted ? "标记为未完成" : "标记为完成")
+                    .accessibilityHint(task.title)
+
+                    // Firefly 萤火闪光（可通过 FeatureFlags.enableFireflyEffects 关闭）
+                    if FeatureFlags.enableFireflyEffects {
+                        FireflyCompleteEffect(visible: $sparkleActive)
+                    }
                 }
-                .buttonStyle(PlainButtonStyle())
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: task.isCompleted)
             }
             
             VStack(alignment: .leading, spacing: 8) {
@@ -1529,6 +1534,28 @@ struct TaskRowView: View {
         return date < Date() && !task.isCompleted
     }
     
+    private func handleCompletionTap() {
+        if !task.isCompleted {
+            // 即将标记为完成：触感 + 动画（FeatureFlag 控制），0.5s 后写入
+            Haptics.shared.taskCompleted()
+            if FeatureFlags.enableFireflyEffects {
+                previewCompleted = true
+                sparkleActive = true
+                // FireflyCompleteEffect 会在 ~0.5s 后自动将 sparkleActive → false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    previewCompleted = false
+                    toggleTaskCompletion()
+                }
+            } else {
+                toggleTaskCompletion()
+            }
+        } else {
+            // 取消完成：轻触感 + 直接写入，无动画
+            Haptics.shared.taskUncompleted()
+            toggleTaskCompletion()
+        }
+    }
+
     private func toggleTaskCompletion() {
         withAnimation {
             let wasCompleted = task.isCompleted
@@ -1544,12 +1571,14 @@ struct TaskRowView: View {
             // 如果任务被取消完成，且有未来的提醒，重新调度通知（静默处理权限）
             else if wasCompleted && !task.isCompleted {
                 if let reminderDate = task.reminderDate, reminderDate > Date() {
-                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate) { result in
+                    NotificationManager.shared.scheduleNotification(for: task) { result in
                         if case .failure = result {
                             // 权限被拒绝，静默清除 reminderDate（列表视图不显示弹窗）
                             task.reminderDate = nil
                             try? modelContext.save()
+                            #if DEBUG
                             print("⚠️ 通知权限不足，已清除提醒时间")
+                            #endif
                         }
                     }
                 }
@@ -1558,10 +1587,27 @@ struct TaskRowView: View {
             // 保存更改
             do {
                 try modelContext.save()
+                #if DEBUG
+                let debugNow = Date()
+                let isOverdueResult = task.dueDate.map { $0 < debugNow } ?? false
+                let fromList = wasCompleted ? "已完成" : (
+                    task.dueDate.map { $0 < debugNow } ?? false ? "已逾期" : "全部/其他"
+                )
+                let toList: String = {
+                    if task.isCompleted { return "已完成" }
+                    if isOverdueResult { return "已逾期" }
+                    if task.dueDate == nil { return "全部/无日期" }
+                    return "全部/已计划/即将到来"
+                }()
+                print("[Toggle] id=\(task.id.uuidString.prefix(8)) isCompleted=\(task.isCompleted) dueDate=\(task.dueDate.map { String(describing: $0) } ?? "nil") now=\(debugNow) isOverdue=\(isOverdueResult)")
+                print("  从 \(fromList) 移除 → 加入 \(toList)")
+                #endif
             } catch {
                 // 如果保存失败，回滚状态
                 task.isCompleted = wasCompleted
+                #if DEBUG
                 print("❌ 保存任务状态失败: \(error)")
+                #endif
             }
         }
     }

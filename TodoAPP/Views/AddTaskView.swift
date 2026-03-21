@@ -189,10 +189,12 @@ struct AddTaskView: View {
             
             // 如果有提醒，调度通知（带权限检查）
             if hasReminder {
-                NotificationManager.shared.scheduleNotification(for: newTask, at: reminderDate) { result in
+                NotificationManager.shared.scheduleNotification(for: newTask) { result in
                     switch result {
                     case .success:
+                        #if DEBUG
                         print("✅ 任务已保存且通知已设置: \(title)")
+                        #endif
                     case .failure(let error):
                         // 权限被拒绝，显示提示
                         if error is NotificationAuthorizationError {
@@ -201,12 +203,16 @@ struct AddTaskView: View {
                             newTask.reminderDate = nil
                             try? modelContext.save()
                         }
+                        #if DEBUG
                         print("⚠️ 通知调度失败: \(error.localizedDescription)")
+                        #endif
                     }
                 }
             }
             
+            #if DEBUG
             print("✅ 任务已保存: \(title)")
+            #endif
             dismiss()
         } catch {
             isSaving = false
@@ -447,7 +453,9 @@ struct TagPickerView: View {
     
     private func createTag() {
         guard !newTagName.isEmpty else { 
+            #if DEBUG
             print("❌ 标签名称为空")
+            #endif
             return 
         }
         // 随机选择颜色
@@ -457,7 +465,9 @@ struct TagPickerView: View {
         do {
             try modelContext.save()
             selectedTags.insert(newTag)
+            #if DEBUG
             print("✅ 创建标签成功: \(newTagName)")
+            #endif
         } catch {
             errorHandler.handle(error, context: "创建标签")
         }
@@ -470,14 +480,18 @@ struct TagPickerView: View {
     }
     
     private func performDeleteTag(_ tag: Tag) {
+        #if DEBUG
         print("🗑️ 删除标签: \(tag.name)")
+        #endif
         // 从选中的标签中移除
         selectedTags.remove(tag)
         // 从数据库删除（由于 deleteRule 为 .nullify，关联的任务会自动解除关联）
         modelContext.delete(tag)
         do {
             try modelContext.save()
+            #if DEBUG
             print("✅ 删除标签成功")
+            #endif
         } catch {
             errorHandler.handle(error, context: "删除标签")
         }
@@ -490,14 +504,18 @@ struct TagPickerView: View {
             return
         }
         
+        #if DEBUG
         print("✏️ 编辑标签: \(tag.name) -> \(editTagName), 颜色: \(editTagColor)")
+        #endif
         
         tag.name = editTagName
         tag.color = editTagColor
         
         do {
             try modelContext.save()
+            #if DEBUG
             print("✅ 编辑标签成功")
+            #endif
         } catch {
             errorHandler.handle(error, context: "编辑标签")
         }

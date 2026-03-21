@@ -16,6 +16,7 @@ let performanceLog = OSLog(subsystem: "com.todoapp.performance", category: .poin
 struct TodoAPPApp: App {
     // 记录应用启动时间
     private let appStartTime = Date()
+    @StateObject private var themeManager = ThemeManager()
     
     var sharedModelContainer: ModelContainer = {
         let dbStartTime = Date()
@@ -31,15 +32,19 @@ struct TodoAPPApp: App {
             let dbEndTime = Date()
             let dbInitTime = (dbEndTime.timeIntervalSince(dbStartTime) * 1000)
             
+            #if DEBUG
             print("✅ 数据库初始化成功（持久化模式）")
             print("⏱️ 数据库初始化耗时: \(String(format: "%.2f", dbInitTime)) ms")
+            #endif
             
             os_signpost(.end, log: performanceLog, name: "Database Initialization", 
                        "Layer 1 Success: %.2f ms", dbInitTime)
             
             return container
         } catch let persistError {
+            #if DEBUG
             print("⚠️ 持久化失败: \(persistError.localizedDescription)")
+            #endif
             
             // 2. 尝试删除旧数据库重新创建（处理 schema 变更）
             let rebuildStartTime = Date()
@@ -50,21 +55,27 @@ struct TodoAPPApp: App {
                 if FileManager.default.fileExists(atPath: dbURL.path) {
                     do {
                         try FileManager.default.removeItem(at: dbURL)
+                        #if DEBUG
                         print("🔄 已删除旧数据库，尝试重建")
+                        #endif
                         
                         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
                         let container = try ModelContainer(for: schema, configurations: [config])
                         
                         let rebuildTime = (Date().timeIntervalSince(rebuildStartTime) * 1000)
+                        #if DEBUG
                         print("✅ 数据库重建成功")
                         print("⏱️ 重建耗时: \(String(format: "%.2f", rebuildTime)) ms")
+                        #endif
                         
                         os_signpost(.end, log: performanceLog, name: "Database Rebuild",
                                    "Layer 2 Success: %.2f ms", rebuildTime)
                         
                         return container
                     } catch {
+                        #if DEBUG
                         print("⚠️ 重建数据库失败: \(error)")
+                        #endif
                         os_signpost(.end, log: performanceLog, name: "Database Rebuild", "Layer 2 Failed")
                     }
                 }
@@ -79,8 +90,10 @@ struct TodoAPPApp: App {
                 let container = try ModelContainer(for: schema, configurations: [inMemoryConfig])
                 
                 let memoryTime = (Date().timeIntervalSince(memoryStartTime) * 1000)
+                #if DEBUG
                 print("⚠️ 使用内存模式（数据不会持久化）")
                 print("⏱️ 内存模式初始化耗时: \(String(format: "%.2f", memoryTime)) ms")
+                #endif
                 
                 os_signpost(.end, log: performanceLog, name: "In-Memory Fallback",
                            "Layer 3 Success: %.2f ms", memoryTime)
@@ -99,9 +112,11 @@ struct TodoAPPApp: App {
                 let safeFallbackStartTime = Date()
                 os_signpost(.begin, log: performanceLog, name: "Safe Fallback")
                 
+                #if DEBUG
                 print("❌ 内存容器创建失败，使用最小化安全模式")
                 print("持久化错误: \(persistError)")
                 print("内存模式错误: \(memoryError)")
+                #endif
                 
                 // 使用最简配置再试
                 do {
@@ -109,7 +124,9 @@ struct TodoAPPApp: App {
                     let fallbackContainer = try ModelContainer(for: schema, configurations: [fallbackConfig])
                     
                     let safeFallbackTime = (Date().timeIntervalSince(safeFallbackStartTime) * 1000)
+                    #if DEBUG
                     print("⏱️ 安全回退模式初始化耗时: \(String(format: "%.2f", safeFallbackTime)) ms")
+                    #endif
                     
                     os_signpost(.end, log: performanceLog, name: "Safe Fallback",
                                "Layer 4 Success: %.2f ms", safeFallbackTime)
@@ -133,7 +150,9 @@ struct TodoAPPApp: App {
                     // 终极降级：返回一个仅包含 schema 的空容器
                     os_signpost(.end, log: performanceLog, name: "Safe Fallback", "Layer 4 Failed - Fatal")
                     
+                    #if DEBUG
                     print("⛔️ 所有数据库初始化尝试失败，返回空容器")
+                    #endif
                     // 注意：这里不使用 fatalError，而是返回一个最简化的容器
                     // 虽然数据可能无法保存，但至少应用不会崩溃
                     do {
@@ -160,32 +179,41 @@ struct TodoAPPApp: App {
     init() {
         // 请求通知权限（首次启动）
         NotificationManager.shared.requestAuthorization { granted, error in
+            #if DEBUG
             if granted {
                 print("✅ 应用启动：通知权限已授予")
             } else {
                 print("⚠️ 应用启动：通知权限未授予")
             }
+            #endif
         }
         
         // 记录 init 完成时间
         let initTime = (Date().timeIntervalSince(appStartTime) * 1000)
+        #if DEBUG
         print("⏱️ App init 耗时: \(String(format: "%.2f", initTime)) ms")
+        #endif
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(themeManager)
                 .onAppear {
                     // 测量从应用启动到首屏显示的总时间
                     let totalStartupTime = (Date().timeIntervalSince(appStartTime) * 1000)
+                    #if DEBUG
                     print("⏱️ 应用完整启动时间: \(String(format: "%.2f", totalStartupTime)) ms")
+                    #endif
                     
                     os_signpost(.event, log: performanceLog, name: "App Launch Complete",
                                "Total startup time: %.2f ms", totalStartupTime)
                     
                     // 记录内存使用情况
                     if let memoryUsage = reportMemoryUsage() {
+                        #if DEBUG
                         print("📊 当前内存占用: \(String(format: "%.1f", memoryUsage)) MB")
+                        #endif
                     }
                 }
         }

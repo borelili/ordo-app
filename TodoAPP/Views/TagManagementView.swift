@@ -15,16 +15,9 @@ struct TagManagementView: View {
     @Query private var allTags: [Tag]
     
     @State private var showingAddTag = false
-    @State private var newTagName = ""
-    @State private var newTagColor = "blue"
-    @State private var showingEditTag = false
     @State private var editingTag: Tag?
-    @State private var editTagName = ""
-    @State private var editTagColor = "gray"
     @State private var showingDeleteConfirm = false
     @State private var tagToDelete: Tag?
-    
-    let availableColors = ["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"]
     
     var body: some View {
         NavigationStack {
@@ -54,10 +47,12 @@ struct TagManagementView: View {
                 }
             }
             .sheet(isPresented: $showingAddTag) {
-                createTagSheet
+                EditTagView(tag: nil)
+                    .environment(\.modelContext, modelContext)
             }
-            .sheet(isPresented: $showingEditTag) {
-                editTagSheet
+            .sheet(item: $editingTag) { tag in
+                EditTagView(tag: tag)
+                    .environment(\.modelContext, modelContext)
             }
             .alert("确认删除标签", isPresented: $showingDeleteConfirm, presenting: tagToDelete) { tag in
                 Button("取消", role: .cancel) {
@@ -125,9 +120,6 @@ struct TagManagementView: View {
             ForEach(allTags.sorted { $0.name < $1.name }, id: \.id) { tag in
                 TagRowView(tag: tag, onEdit: {
                     editingTag = tag
-                    editTagName = tag.name
-                    editTagColor = tag.color
-                    showingEditTag = true
                 }, onDelete: {
                     tagToDelete = tag
                     showingDeleteConfirm = true
@@ -136,180 +128,15 @@ struct TagManagementView: View {
         }
     }
     
-    // MARK: - Create Tag Sheet
-    private var createTagSheet: some View {
-        NavigationStack {
-            Form {
-                Section("标签信息") {
-                    TextField("标签名称", text: $newTagName)
-                    
-                    Picker("颜色", selection: $newTagColor) {
-                        ForEach(availableColors, id: \.self) { color in
-                            HStack {
-                                Circle()
-                                    .fill(Tag(name: "", color: color).colorValue)
-                                    .frame(width: 20, height: 20)
-                                Text(color)
-                            }
-                            .tag(color)
-                        }
-                    }
-                    #if os(iOS)
-                    .pickerStyle(.menu)
-                    #endif
-                    
-                    // 预览
-                    HStack {
-                        Text("预览")
-                        Spacer()
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Tag(name: "", color: newTagColor).colorValue)
-                                .frame(width: 16, height: 16)
-                            Text(newTagName.isEmpty ? "标签名称" : newTagName)
-                                .font(.callout)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Tag(name: "", color: newTagColor).colorValue.opacity(0.2))
-                        .cornerRadius(12)
-                    }
-                }
-            }
-            .navigationTitle("新建标签")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        showingAddTag = false
-                        newTagName = ""
-                        newTagColor = "blue"
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("创建") {
-                        createTag()
-                    }
-                    .disabled(newTagName.isEmpty)
-                }
-            }
-        }
-    }
-    
-    // MARK: - Edit Tag Sheet
-    private var editTagSheet: some View {
-        NavigationStack {
-            Form {
-                Section("标签信息") {
-                    TextField("标签名称", text: $editTagName)
-                    
-                    Picker("颜色", selection: $editTagColor) {
-                        ForEach(availableColors, id: \.self) { color in
-                            HStack {
-                                Circle()
-                                    .fill(Tag(name: "", color: color).colorValue)
-                                    .frame(width: 20, height: 20)
-                                Text(color)
-                            }
-                            .tag(color)
-                        }
-                    }
-                    #if os(iOS)
-                    .pickerStyle(.menu)
-                    #endif
-                    
-                    // 预览
-                    HStack {
-                        Text("预览")
-                        Spacer()
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Tag(name: "", color: editTagColor).colorValue)
-                                .frame(width: 16, height: 16)
-                            Text(editTagName.isEmpty ? "标签名称" : editTagName)
-                                .font(.callout)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Tag(name: "", color: editTagColor).colorValue.opacity(0.2))
-                        .cornerRadius(12)
-                    }
-                }
-                
-                if let tag = editingTag {
-                    Section("使用情况") {
-                        HStack {
-                            Text("关联任务")
-                            Spacer()
-                            Text("\(tag.tasks?.count ?? 0) 个")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("编辑标签")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        showingEditTag = false
-                        editingTag = nil
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        saveEditedTag()
-                    }
-                    .disabled(editTagName.isEmpty)
-                }
-            }
-        }
-    }
-    
     // MARK: - Actions
-    private func createTag() {
-        guard !newTagName.isEmpty else { return }
-        
-        let tag = Tag(name: newTagName, color: newTagColor)
-        modelContext.insert(tag)
-        
-        do {
-            try modelContext.save()
-            print("✅ 创建标签成功: \(newTagName)")
-            showingAddTag = false
-            newTagName = ""
-            newTagColor = "blue"
-        } catch {
-            errorHandler.handle(error, context: "创建标签")
-        }
-    }
-    
-    private func saveEditedTag() {
-        guard let tag = editingTag, !editTagName.isEmpty else { return }
-        
-        tag.name = editTagName
-        tag.color = editTagColor
-        
-        do {
-            try modelContext.save()
-            print("✅ 编辑标签成功")
-            showingEditTag = false
-            editingTag = nil
-        } catch {
-            errorHandler.handle(error, context: "编辑标签")
-        }
-    }
-    
     private func performDeleteTag(_ tag: Tag) {
         modelContext.delete(tag)
         
         do {
             try modelContext.save()
+            #if DEBUG
             print("✅ 删除标签成功")
+            #endif
         } catch {
             errorHandler.handle(error, context: "删除标签")
         }

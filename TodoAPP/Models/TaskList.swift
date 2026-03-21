@@ -18,7 +18,7 @@ final class TaskList {
     var createdAt: Date
     var sortOrder: Int
 
-    @Relationship(deleteRule: .nullify, inverse: \Task.taskList)
+    @Relationship(deleteRule: .cascade, inverse: \Task.taskList)
     var tasks: [Task]?
 
     init(name: String, icon: String = "list.bullet", color: String = "blue", sortOrder: Int = 0) {
@@ -33,14 +33,20 @@ final class TaskList {
     
     var colorValue: Color {
         switch color {
-        case "blue": return .blue
-        case "green": return .green
+        case "blue":   return .blue
+        case "cyan":   return .cyan
+        case "teal":   return Color(.systemTeal)
+        case "green":  return .green
+        case "mint":   return Color(.systemMint)
+        case "yellow": return .yellow
         case "orange": return .orange
-        case "red": return .red
+        case "red":    return .red
+        case "pink":   return .pink
         case "purple": return .purple
-        case "pink": return .pink
-        case "gray": return .gray
-        default: return .blue
+        case "indigo": return .indigo
+        case "brown":  return .brown
+        case "gray":   return .gray
+        default:       return .blue
         }
     }
 }

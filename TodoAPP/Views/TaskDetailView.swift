@@ -11,6 +11,7 @@ import SwiftData
 struct TaskDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.odysseyStore) private var odysseyStore   // 可空，不强制依赖
     @StateObject private var errorHandler = ErrorHandler.shared
     @Query private var allTags: [Tag]
     @Bindable var task: Task
@@ -94,6 +95,27 @@ struct TaskDetailView: View {
                 }
                 .padding(.horizontal)
                 
+                // 奥德赛归属徽章（仅当任务关联了奥德赛项目时显示）
+                if let store = odysseyStore,
+                   let ctx = store.context(for: task.id) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "map.fill")
+                            .font(.caption2)
+                            .foregroundColor(.accentColor)
+                        Text(ctx.displayText)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color.accentColor.opacity(0.10))
+                    )
+                    .padding(.horizontal)
+                }
+
                 Divider()
                 
                 // 优先级
@@ -176,15 +198,16 @@ struct TaskDetailView: View {
                                     }
                                 } else {
                                     // 打开提醒 - 需要检查权限
-                                    let tempDate = Date()
-                                    NotificationManager.shared.scheduleNotification(for: task, at: tempDate) { result in
+                                    // 先设置一个默认的提醒时间
+                                    task.reminderDate = Date()
+                                    NotificationManager.shared.scheduleNotification(for: task) { result in
                                         switch result {
                                         case .success:
-                                            // 权限已授予，设置 reminderDate
-                                            task.reminderDate = tempDate
+                                            // 权限已授予，保存任务
                                             try? modelContext.save()
                                         case .failure:
-                                            // 权限被拒绝，显示提示并回滚开关
+                                            // 权限被拒绝，显示提示并回滚
+                                            task.reminderDate = nil
                                             hasReminder = false
                                             showNotificationPermissionAlert = true
                                         }
@@ -196,15 +219,15 @@ struct TaskDetailView: View {
                             DatePicker("", selection: Binding(
                                 get: { task.reminderDate ?? Date() },
                                 set: { newDate in
-                                    let oldDate = task.reminderDate
-                                    // 检查权限并更新通知
-                                    NotificationManager.shared.scheduleNotification(for: task, at: newDate) { result in
+                                    // 先更新 reminderDate
+                                    task.reminderDate = newDate
+                                    // 然后重新调度通知
+                                    NotificationManager.shared.scheduleNotification(for: task) { result in
                                         switch result {
                                         case .success:
-                                            task.reminderDate = newDate
                                             try? modelContext.save()
                                         case .failure:
-                                            // 权限被拒绝，显示提示并恢复原日期
+                                            // 权限被拒绝，显示提示
                                             showNotificationPermissionAlert = true
                                         }
                                     }
@@ -352,6 +375,22 @@ struct TaskDetailView: View {
                     }
                     .padding(.horizontal)
                 }
+                
+                #if DEBUG
+                // Debug 测试通知按钮
+                VStack(spacing: 8) {
+                    Divider()
+                        .padding(.horizontal)
+                    
+                    TestNotificationButton()
+                        .padding(.horizontal)
+                    
+                    Text("仅 Debug 构建可见")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 16)
+                #endif
                 
                 Spacer(minLength: 40)
             }
@@ -515,7 +554,7 @@ struct TaskDetailView: View {
             // 如果任务被取消完成，且有未来的提醒，重新调度通知（带权限检查）
             else if wasCompleted && !task.isCompleted {
                 if let reminderDate = task.reminderDate, reminderDate > Date() {
-                    NotificationManager.shared.scheduleNotification(for: task, at: reminderDate) { result in
+                    NotificationManager.shared.scheduleNotification(for: task) { result in
                         if case .failure = result {
                             // 权限被拒绝，清除 reminderDate
                             task.reminderDate = nil
@@ -554,7 +593,9 @@ struct TaskDetailView: View {
         
         do {
             try modelContext.save()
+            #if DEBUG
             print("✅ 子任务已添加: \(newSubtaskTitle)")
+            #endif
         } catch {
             errorHandler.handle(error, context: "添加子任务")
         }
@@ -583,7 +624,9 @@ struct TaskDetailView: View {
         
         do {
             try modelContext.save()
+            #if DEBUG
             print("✅ 子任务已删除")
+            #endif
         } catch {
             errorHandler.handle(error, context: "删除子任务")
         }
@@ -600,7 +643,9 @@ struct TaskDetailView: View {
         
         do {
             try modelContext.save()
+            #if DEBUG
             print("✅ 子任务已编辑")
+            #endif
         } catch {
             errorHandler.handle(error, context: "编辑子任务")
         }
