@@ -47,6 +47,9 @@ struct OdysseyProjectDetailView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { navToolbar }
         .onAppear { if draft == nil { draft = project } }
+        .onChange(of: project) { _, newProject in
+            if !hasChanges { draft = newProject }
+        }
         .alert("确认删除项目", isPresented: $showDeleteAlert) {
             Button("删除", role: .destructive) {
                 store.deleteProject(id: projectID, from: goalID, in: pathID)
@@ -69,7 +72,6 @@ struct OdysseyProjectDetailView: View {
                     existing.subtracting(newIDs).forEach {
                         store.unlinkTask(id: $0, from: projectID, goalID: goalID, pathID: pathID)
                     }
-                    draft = project
                 }
             )
             .environmentObject(theme)
@@ -188,7 +190,6 @@ struct OdysseyProjectDetailView: View {
                                 id: task.id, from: projectID,
                                 goalID: goalID, pathID: pathID
                             )
-                            draft = project
                         }
                     }
                     .buttonStyle(.plain)
