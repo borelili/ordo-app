@@ -95,24 +95,73 @@ struct TaskDetailView: View {
                 }
                 .padding(.horizontal)
                 
-                // 奥德赛归属徽章（仅当任务关联了奥德赛项目时显示）
+                // 规划归属模块（仅当任务关联了奥德赛路径/目标/项目时显示）
                 if let store = odysseyStore,
-                   let ctx = store.context(for: task.id) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "map.fill")
-                            .font(.caption2)
-                            .foregroundColor(.accentColor)
-                        Text(ctx.displayText)
-                            .font(.caption2)
+                   let dctx = store.detailedContext(for: task.id) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("规划归属")
+                            .font(.headline)
                             .foregroundColor(.secondary)
-                            .lineLimit(1)
+
+                        VStack(spacing: 0) {
+                            // 路径行（始终存在）
+                            NavigationLink(destination:
+                                OdysseyPathDetailView(pathID: dctx.pathID)
+                                    .environmentObject(store)
+                            ) {
+                                odysseyAttributionRow(
+                                    icon: "map.fill",
+                                    label: "路径",
+                                    value: dctx.pathTitle
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            // 目标行
+                            if let goalID = dctx.goalID, !dctx.goalTitle.isEmpty {
+                                Divider().padding(.leading, 40)
+                                NavigationLink(destination:
+                                    OdysseyGoalDetailView(pathID: dctx.pathID, goalID: goalID)
+                                        .environmentObject(store)
+                                ) {
+                                    odysseyAttributionRow(
+                                        icon: "target",
+                                        label: "目标",
+                                        value: dctx.goalTitle
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // 项目行
+                            if let goalID = dctx.goalID,
+                               let projectID = dctx.projectID,
+                               !dctx.projectName.isEmpty {
+                                Divider().padding(.leading, 40)
+                                NavigationLink(destination:
+                                    OdysseyProjectDetailView(
+                                        pathID: dctx.pathID,
+                                        goalID: goalID,
+                                        projectID: projectID
+                                    )
+                                    .environmentObject(store)
+                                ) {
+                                    odysseyAttributionRow(
+                                        icon: "folder.fill",
+                                        label: "项目",
+                                        value: dctx.projectName
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.06))
+                                .strokeBorder(Color.accentColor.opacity(0.15), lineWidth: 1)
+                        )
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(Color.accentColor.opacity(0.10))
-                    )
                     .padding(.horizontal)
                 }
 
@@ -504,6 +553,30 @@ struct TaskDetailView: View {
         }
     }
     
+    @ViewBuilder
+    private func odysseyAttributionRow(icon: String, label: String, value: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundColor(.accentColor)
+                .frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.gray.opacity(0.5))
+        }
+        .padding(.vertical, 6)
+    }
+
     private func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -517,9 +590,15 @@ struct TaskDetailView: View {
         if task.reminderDate != nil {
             NotificationManager.shared.cancelNotification(for: task)
         }
+        // 删除前，从奥德赛所有层级中清除该任务的 UUID，避免脏统计
+        let deletedID = task.id
         modelContext.delete(task)
         do {
             try modelContext.save()
+            // 保存成功后，从 OdysseyStore 所有层级中移除该 ID
+            if let store = odysseyStore {
+                store.removeTaskIDFromAllLayers(deletedID)
+            }
             dismiss()
         } catch {
             errorHandler.handle(error, context: "删除任务")

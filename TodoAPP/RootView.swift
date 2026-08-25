@@ -78,6 +78,7 @@ struct RootView: View {
         }
         .sheet(isPresented: $showingAddTask) {
             AddTaskView()
+                .environmentObject(ErrorHandler.shared)
         }
         // 主题对应的 colorScheme，让系统组件（List、NavigationBar等）自动适配
         .preferredColorScheme(theme.current.colorScheme)

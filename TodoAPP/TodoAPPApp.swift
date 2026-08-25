@@ -199,6 +199,7 @@ struct TodoAPPApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(themeManager)
+                .environmentObject(ErrorHandler.shared)
                 .onAppear {
                     // 测量从应用启动到首屏显示的总时间
                     let totalStartupTime = (Date().timeIntervalSince(appStartTime) * 1000)

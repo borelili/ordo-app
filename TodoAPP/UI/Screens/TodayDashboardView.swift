@@ -198,6 +198,7 @@ struct TodayDashboardView: View {
             // 新增任务 sheet
             .sheet(isPresented: $showingAddTask) {
                 AddTaskView()
+                    .environmentObject(ErrorHandler.shared)
             }
             // 主题设置 sheet
             .sheet(isPresented: $showingThemeSettings) {

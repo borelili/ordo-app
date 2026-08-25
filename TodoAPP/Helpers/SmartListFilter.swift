@@ -50,10 +50,10 @@ struct SmartListFilter {
     }
     
     /// 3) Today（今天）：未完成任务中满足任一条件
-    /// - createdAt 在今天
     /// - dueDate 在今天
     /// - reminderDate 在今天
     /// **重要**: Today 不包含 Overdue（dueDate < now 的任务不出现在 Today）
+    /// **重要**: 不以 createdAt 为条件，避免无日期的新建任务自动进入今天
     static func filterToday(_ tasks: [Task], now: Date = Date()) -> [Task] {
         return tasks.filter { task in
             guard !task.isCompleted else { return false }
@@ -63,17 +63,12 @@ struct SmartListFilter {
                 return false
             }
             
-            // 条件 a: createdAt 在今天
-            if isToday(task.createdAt) {
-                return true
-            }
-            
-            // 条件 b: dueDate 在今天
+            // 条件 a: dueDate 在今天
             if let dueDate = task.dueDate, isToday(dueDate) {
                 return true
             }
             
-            // 条件 c: reminderDate 在今天
+            // 条件 b: reminderDate 在今天
             if let reminderDate = task.reminderDate, isToday(reminderDate) {
                 return true
             }

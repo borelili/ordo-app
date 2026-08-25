@@ -100,6 +100,17 @@ struct OdysseyContext {
     }
 }
 
+// MARK: - OdysseyDetailedContext（带 ID，用于跳转导航）
+
+struct OdysseyDetailedContext {
+    let pathID:      UUID
+    let pathTitle:   String
+    let goalID:      UUID?
+    let goalTitle:   String   // 空字符串 = 仅路径层关联
+    let projectID:   UUID?
+    let projectName: String   // 空字符串 = 无项目层关联
+}
+
 // MARK: - OdysseyStore
 
 @MainActor
@@ -141,7 +152,42 @@ final class OdysseyStore: ObservableObject {
     var archivedPaths:     [OdysseyPath] { paths.filter { $0.isArchived } }
     var totalGoalCount:    Int { activePaths.reduce(0) { $0 + $1.goals.count } }
     var totalProjectCount: Int { paths.reduce(0) { $0 + $1.totalProjectCount } }
+    /// 该计数仅用于无法传入真实任务集时的占位，实际显示时请用 liveTaskCount(existingIDs:)
     var totalTaskCount:    Int { paths.reduce(0) { $0 + $1.totalLinkedTaskCount } }
+
+    /// 基于真实存在的任务 ID 集合计算关联任务数，过滤已删除的脏 UUID
+    func liveTaskCount(existingIDs: Set<UUID>) -> Int {
+        var total = 0
+
+        for path in paths {
+            total += path.linkedTaskIDs.filter { existingIDs.contains($0) }.count
+
+            for goal in path.goals {
+                total += goal.linkedTaskIDs.filter { existingIDs.contains($0) }.count
+
+                for project in goal.projects {
+                    total += project.linkedTaskIDs.filter { existingIDs.contains($0) }.count
+                }
+            }
+        }
+
+        return total
+    }
+
+    /// 清理所有层级中已不存在的 linkedTaskIDs（任务删除后调用）
+    func cleanDeletedTaskIDs(existingIDs: Set<UUID>) {
+        for pi in paths.indices {
+            paths[pi].linkedTaskIDs.removeAll { !existingIDs.contains($0) }
+            for gi in paths[pi].goals.indices {
+                paths[pi].goals[gi].linkedTaskIDs.removeAll { !existingIDs.contains($0) }
+                for proj in paths[pi].goals[gi].projects.indices {
+                    paths[pi].goals[gi].projects[proj].linkedTaskIDs.removeAll { !existingIDs.contains($0) }
+                }
+            }
+        }
+        // 直接触发 save，不走 didSet（避免重复触发）
+        save()
+    }
 
     // 所有目标（跨路径，未归档路径）
     var allGoals: [(pathID: UUID, goal: OdysseyGoal)] {
@@ -271,6 +317,20 @@ final class OdysseyStore: ObservableObject {
 
     // MARK: - Task Linkage
 
+    /// 从所有层级（路径/目标/项目）中移除指定任务 ID（任务被删除时调用）
+    func removeTaskIDFromAllLayers(_ taskID: UUID) {
+        for pi in paths.indices {
+            paths[pi].linkedTaskIDs.removeAll { $0 == taskID }
+            for gi in paths[pi].goals.indices {
+                paths[pi].goals[gi].linkedTaskIDs.removeAll { $0 == taskID }
+                for proj in paths[pi].goals[gi].projects.indices {
+                    paths[pi].goals[gi].projects[proj].linkedTaskIDs.removeAll { $0 == taskID }
+                }
+            }
+        }
+        save()
+    }
+
     // 项目层：绑定 pathID + goalID + projectID
     func linkTask(id taskID: UUID, to projectID: UUID, goalID: UUID, pathID: UUID) {
         mutate(pathID: pathID) { path in
@@ -355,6 +415,40 @@ final class OdysseyStore: ObservableObject {
                     pathTitle:   path.title,
                     goalTitle:   "",
                     projectName: ""
+                )
+            }
+        }
+        return nil
+    }
+
+    /// 反向查询（带 ID 版本）：给定 Task.id，返回归属的路径/目标/项目 ID+名称，用于导航跳转
+    func detailedContext(for taskID: UUID) -> OdysseyDetailedContext? {
+        for path in paths {
+            for goal in path.goals {
+                for project in goal.projects {
+                    if project.linkedTaskIDs.contains(taskID) {
+                        return OdysseyDetailedContext(
+                            pathID: path.id, pathTitle: path.title,
+                            goalID: goal.id, goalTitle: goal.title,
+                            projectID: project.id, projectName: project.name
+                        )
+                    }
+                }
+            }
+            for goal in path.goals {
+                if goal.linkedTaskIDs.contains(taskID) {
+                    return OdysseyDetailedContext(
+                        pathID: path.id, pathTitle: path.title,
+                        goalID: goal.id, goalTitle: goal.title,
+                        projectID: nil, projectName: ""
+                    )
+                }
+            }
+            if path.linkedTaskIDs.contains(taskID) {
+                return OdysseyDetailedContext(
+                    pathID: path.id, pathTitle: path.title,
+                    goalID: nil, goalTitle: "",
+                    projectID: nil, projectName: ""
                 )
             }
         }

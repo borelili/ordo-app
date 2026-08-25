@@ -27,6 +27,7 @@ struct ListDashboardView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var odysseyStore: OdysseyStore   // 由 RootView 注入
     @Query(sort: \TaskList.sortOrder) private var taskLists: [TaskList]
+    @Query private var allTasks: [Task]   // 用于传给 OdysseyModuleCard 做实时计数
 
     @State private var navPath: [PlanningNavDest] = []
 
@@ -60,7 +61,8 @@ struct ListDashboardView: View {
                     // ── Section 2: 奥德赛计划 ──────────────────────
                     VStack(alignment: .leading, spacing: 12) {
                         sectionHeader("奥德赛计划", icon: "map.fill")
-                        OdysseyModuleCard(store: odysseyStore) {
+                        OdysseyModuleCard(store: odysseyStore,
+                                          allTaskIDs: Set(allTasks.map(\.id))) {
                             navPath.append(.odyssey)
                         }
                     }
@@ -208,6 +210,7 @@ struct ListSummaryCard: View {
 struct OdysseyModuleCard: View {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject var store: OdysseyStore
+    let allTaskIDs: Set<UUID>   // 传入真实存在的任务 ID 集合，用于过滤脏 UUID
     let onTap: () -> Void
 
     var body: some View {
@@ -267,13 +270,19 @@ struct OdysseyModuleCard: View {
                     )
                     Spacer()
                     OdysseyStatItem(
+                        value: store.totalGoalCount,
+                        label: "目标",
+                        icon: "target"
+                    )
+                    Spacer()
+                    OdysseyStatItem(
                         value: store.totalProjectCount,
                         label: "项目",
                         icon: "folder"
                     )
                     Spacer()
                     OdysseyStatItem(
-                        value: store.totalTaskCount,
+                        value: store.liveTaskCount(existingIDs: allTaskIDs),
                         label: "关联任务",
                         icon: "checkmark.square"
                     )

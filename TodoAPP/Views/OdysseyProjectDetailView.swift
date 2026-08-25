@@ -30,7 +30,9 @@ struct OdysseyProjectDetailView: View {
 
     private var linkedTasks: [Task] {
         guard let d = draft else { return [] }
-        return allTasks.filter { d.linkedTaskIDs.contains($0.id) }
+        // 只返回仍存在于 SwiftData 的任务，自动过滤已删除的脏 UUID
+        let existingIDs = Set(allTasks.map(\.id))
+        return allTasks.filter { d.linkedTaskIDs.contains($0.id) && existingIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -165,10 +167,20 @@ struct OdysseyProjectDetailView: View {
             HStack {
                 SectionHeader(title: "关联任务（\(linkedTasks.count)）", icon: "checkmark.square.fill")
                 Spacer()
+                // 新建任务并自动关联
+                Button {
+                    showNewTaskSheet = true
+                } label: {
+                    Label("新建", systemImage: "plus.circle")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(theme.current.primaryAccent)
+                }
+                .buttonStyle(.plain)
+                // 关联已有任务
                 Button {
                     showLinkPicker = true
                 } label: {
-                    Label("选择已有", systemImage: "link.badge.plus")
+                    Label("关联已有", systemImage: "link.badge.plus")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(theme.current.primaryAccent)
                 }
@@ -176,7 +188,7 @@ struct OdysseyProjectDetailView: View {
             }
 
             if linkedTasks.isEmpty {
-                Text("还没有关联任务\n点击右下 + 新建任务，或点击\"选择已有\"关联现有任务")
+                Text("还没有关联任务\n点击\"新建\"创建并关联，或点击\"关联已有\"选择现有任务")
                     .font(.subheadline)
                     .foregroundStyle(theme.current.textMuted)
                     .multilineTextAlignment(.center)

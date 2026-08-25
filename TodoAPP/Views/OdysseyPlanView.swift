@@ -9,12 +9,14 @@
 //   5. PathCard 支持 contextMenu / 编辑模式按钮
 
 import SwiftUI
+import SwiftData
 
 // MARK: - OdysseyPlanView
 
 struct OdysseyPlanView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: OdysseyStore
+    @Query private var allTasks: [Task]   // 用于实时计算关联任务数，自动过滤已删除任务
 
     @State private var isEditing          = false
     @State private var showNewGoal        = false
@@ -133,7 +135,7 @@ struct OdysseyPlanView: View {
             }.buttonStyle(.plain)
 
             Button { navTasksOverview = true } label: {
-                OdysseyStatPill(value: store.totalTaskCount,
+                OdysseyStatPill(value: store.liveTaskCount(existingIDs: Set(allTasks.map(\.id))),
                                 label: "关联任务", icon: "checkmark.square.fill",
                                 color: theme.current.successColor)
             }.buttonStyle(.plain)
