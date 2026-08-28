@@ -11,9 +11,9 @@ import SwiftUI
 
 @Model
 final class Tag {
-    var id: UUID
-    var name: String
-    var color: String
+    var id: UUID = UUID()
+    var name: String = ""
+    var color: String = "gray"
     
     @Relationship(deleteRule: .nullify, inverse: \Task.tags)
     var tasks: [Task]?

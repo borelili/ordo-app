@@ -11,16 +11,16 @@ import SwiftUI
 
 @Model
 final class Task {
-    var id: UUID
-    var title: String
-    var taskDescription: String
-    var isCompleted: Bool
-    var priority: Priority
+    var id: UUID = UUID()
+    var title: String = ""
+    var taskDescription: String = ""
+    var isCompleted: Bool = false
+    var priority: Priority = Priority.medium
     var dueDate: Date?
     var reminderDate: Date?
-    var createdAt: Date
-    var updatedAt: Date
-    var order: Int  // 任务排序顺序
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+    var order: Int = 0  // 任务排序顺序
     
     // 关系
     var taskList: TaskList?
@@ -72,9 +72,9 @@ final class Task {
 
 @Model
 final class Subtask {
-    var id: UUID
-    var title: String
-    var isCompleted: Bool
+    var id: UUID = UUID()
+    var title: String = ""
+    var isCompleted: Bool = false
     var parentTask: Task?
     
     init(title: String, isCompleted: Bool = false) {

@@ -11,12 +11,12 @@ import SwiftUI
 
 @Model
 final class TaskList {
-    var id: UUID
-    var name: String
-    var icon: String
-    var color: String
-    var createdAt: Date
-    var sortOrder: Int
+    var id: UUID = UUID()
+    var name: String = ""
+    var icon: String = "list.bullet"
+    var color: String = "blue"
+    var createdAt: Date = Date()
+    var sortOrder: Int = 0
 
     @Relationship(deleteRule: .cascade, inverse: \Task.taskList)
     var tasks: [Task]?

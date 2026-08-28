@@ -24,9 +24,9 @@ struct TodoAPPApp: App {
         
         let schema = Schema([Task.self, TaskList.self, Tag.self])
         
-        // 1. 优先尝试持久化
+        // 1. 优先尝试持久化（启用 CloudKit 同步）
         do {
-            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, cloudKitDatabase: .automatic)
             let container = try ModelContainer(for: schema, configurations: [config])
             
             let dbEndTime = Date()
@@ -59,7 +59,7 @@ struct TodoAPPApp: App {
                         print("🔄 已删除旧数据库，尝试重建")
                         #endif
                         
-                        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+                        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, cloudKitDatabase: .automatic)
                         let container = try ModelContainer(for: schema, configurations: [config])
                         
                         let rebuildTime = (Date().timeIntervalSince(rebuildStartTime) * 1000)
@@ -177,6 +177,9 @@ struct TodoAPPApp: App {
     }()
     
     init() {
+        // 校验 Apple 登录凭证是否仍有效
+        AppleSignInManager.shared.refreshCredentialState()
+
         // 请求通知权限（首次启动）
         NotificationManager.shared.requestAuthorization { granted, error in
             #if DEBUG

@@ -94,7 +94,7 @@ struct TodayDashboardView: View {
     @State private var selectedDate: Date = Date()
     @State private var selectedPill: TodayFilterPill = .all
     @State private var showingAddTask = false
-    @State private var showingThemeSettings = false
+    @State private var showingProfileSettings = false
     @State private var taskToEdit: Task? = nil
 
     private var now: Date { dateRefresher.currentDate }
@@ -200,9 +200,9 @@ struct TodayDashboardView: View {
                 AddTaskView()
                     .environmentObject(ErrorHandler.shared)
             }
-            // 主题设置 sheet
-            .sheet(isPresented: $showingThemeSettings) {
-                ThemeSettingsView()
+            // 我的（账户/外观/通知/关于）sheet
+            .sheet(isPresented: $showingProfileSettings) {
+                ProfileSettingsView()
                     .environmentObject(theme)
             }
         }
@@ -226,12 +226,12 @@ struct TodayDashboardView: View {
             }
             Spacer()
             Button {
-                showingThemeSettings = true
+                showingProfileSettings = true
             } label: {
-                Image(systemName: "paintpalette")
+                Image(systemName: "person.circle")
                     .font(.title3)
                     .foregroundStyle(theme.current.textSecondary)
-                    .accessibilityLabel("主题设置")
+                    .accessibilityLabel("我的")
             }
         }
     }
