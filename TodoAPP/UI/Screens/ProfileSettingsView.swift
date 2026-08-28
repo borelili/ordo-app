@@ -126,7 +126,7 @@ struct ProfileSettingsView: View {
             }
             if notificationStatus == .denied {
                 Button("前往系统设置开启通知") {
-                    openSystemSettings()
+                    NotificationManager.shared.openNotificationSettings()
                 }
             } else if notificationStatus == .notDetermined {
                 Button("开启通知权限") {
@@ -150,13 +150,6 @@ struct ProfileSettingsView: View {
         NotificationManager.shared.checkAuthorizationStatus { status in
             notificationStatus = status
         }
-    }
-
-    private func openSystemSettings() {
-        #if os(iOS)
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
-        #endif
     }
 
     // MARK: - 关于
